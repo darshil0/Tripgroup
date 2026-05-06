@@ -306,10 +306,22 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
   const handleNext = async () => {
     if (step === 1) {
       setLoadingAI(true);
-      const suggestions = await getTripRecommendations(formData.groupSize, formData.budget, formData.destination || 'anywhere warm');
-      setRecommendations(suggestions);
-      setLoadingAI(false);
-      setStep(2);
+      setError(null);
+      try {
+        const suggestions = await getTripRecommendations(formData.groupSize, formData.budget, formData.destination || 'anywhere warm', APP_CONFIG.RETRY_ATTEMPTS);
+        
+        if (suggestions.length === 0) {
+          setError("I couldn't generate recommendations right now. Please enter your trip details manually.");
+          // Don't advance to step 2 automatically if we want them to enter manually on step 1 or just show error
+        } else {
+          setRecommendations(suggestions);
+          setStep(2);
+        }
+      } catch (err) {
+        setError("AI Service unavailable. Please proceed manually.");
+      } finally {
+        setLoadingAI(false);
+      }
     }
   };
 
@@ -639,6 +651,8 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         
         if (!tripSnap.exists()) throw new Error("Trip not found");
         const currentTrip = tripSnap.data() as Trip;
+        
+        console.log(`[Transaction] Capacity check: ${currentTrip.participantCount || 0}/${currentTrip.groupSize}`);
         
         // Use denormalized count for efficient scaling
         if ((currentTrip.participantCount || 0) >= currentTrip.groupSize) {
