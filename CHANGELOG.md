@@ -2,7 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2024-05-06
+## [1.3.0] - 2026-05-06
+
+### Added
+- **Mission Checklist**: New task management system for trip objectives with real-time sync.
+- **Capacity-Aware Joining**: Robust "Join Initiative" functionality using Firestore transactions to enforce `groupSize` limits.
+- **Admin Lock State**: Ability for trip creators to "Finalize Bookings," locking the mission state and preventing new joins.
+- **Standardized Data Layer**: Added `normalizeData` utility to cross-convert Firestore Timestamps and epoch numbers.
+- **Centralized Error Handling**: Standardized Firestore error shapes for better debugging and UI feedback.
+- **Environment Variable Secrets**: Migrated Firebase configuration to environment variables (`VITE_FIREBASE_*`) to prevent secret scanning issues.
+
+### Improved
+- **AI Resilience**: Updated Gemini integration with stable `gemini-flash-latest` alias, 15s request timeouts, and input sanitization.
+- **Security Hardening**: Enforced strict integer bounds on `groupSize` (1-50) and immutable field protection in Firestore rules.
+- **UI Consistency**: Enhanced trip headers with capacity status and synchronized date formatting across views.
+
+## [1.2.0] - 2026-05-06
+
+### Added
+- "View Policy Details" link to Insurance Upsell Modal and Banners.
+- Editorial-grade UI design system (visible grids, atmosphere backgrounds, micro-labels).
+- Toast notification system for success and error states.
+- Staggered entrance animations for Dashboard and Chat.
+- Lazy initialization for Gemini AI service.
 
 ### Fixed
 - **Gemini AI Integration**: Updated to use the latest stable model (`gemini-2.0-flash`) and corrected the @google/genai SDK implementation.

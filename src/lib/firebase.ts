@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc, getDocFromServer, Timestamp } from 'firebase/firestore';
 import firebaseConfigFile from '../../firebase-applet-config.json';
 
 // Support both environment variables and the config file
@@ -17,6 +17,37 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth();
+
+/**
+ * Normalizes Firestore data by converting all Timestamps to numbers (ms).
+ */
+export function normalizeData<T>(data: any): T {
+  if (!data) return data;
+  
+  const result = { ...data };
+  for (const key in result) {
+    const val = result[key];
+    if (val instanceof Timestamp) {
+      result[key] = val.toMillis();
+    } else if (typeof val === 'object' && val !== null && 'seconds' in val && 'nanoseconds' in val) {
+      // Handle plain objects that look like Timestamps (e.g. from JSON or edge cases)
+      result[key] = new Timestamp(val.seconds, val.nanoseconds).toMillis();
+    }
+  }
+  return result as T;
+}
+
+// Test connection
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+testConnection();
 
 export enum OperationType {
   CREATE = 'create',
@@ -52,6 +83,29 @@ export function handleAppError(error: unknown, operation?: OperationType): AppEr
 
 // Deprecated - kept for compatibility during migration
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const err = handleAppError(error, operationType);
-  throw new Error(JSON.stringify(err));
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  }
+  
+  // Predictable error message for logging and UI consumption
+  const message = `[FirestoreError] ${operationType.toUpperCase()} on ${path || 'unknown'}: ${errInfo.error}`;
+  console.error(message, errInfo);
+  
+  // Throwing a standardized error object
+  const finalError = new Error(message);
+  (finalError as any).details = errInfo;
+  throw finalError;
 }
