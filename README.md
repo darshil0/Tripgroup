@@ -30,7 +30,19 @@ Create a `.env` file (based on `.env.example`):
 
 ```env
 GEMINI_API_KEY="your_gemini_api_key"
+
+# Optional: Firebase config to avoid hardcoding in source control
+VITE_FIREBASE_API_KEY="your_firebase_api_key"
+VITE_FIREBASE_PROJECT_ID="your_project_id"
+# ... see .env.example for more
 ```
+
+## 🔒 Security Note
+
+To avoid secret scanning warnings in GitHub:
+1. Copy the values from `firebase-applet-config.json` to your environment variables.
+2. Ensure `.env` is in your `.gitignore` (it is by default in this project).
+3. If you want to strictly prevent scanning of the config file, you can move its contents to environment variables and use placeholders in the file.
 
 ## 📜 License
 
