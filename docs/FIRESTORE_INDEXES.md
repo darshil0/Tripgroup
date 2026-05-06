@@ -8,6 +8,7 @@ The following composite indexes are required for optimal performance of the Trip
 | :--- | :--- | :--- |
 | `trips` | `status` (Ascending), `createdAt` (Descending) | Collection |
 | `trips` | `adminId` (Ascending), `createdAt` (Descending) | Collection |
+| `trips` | `participantIds` (Array-Contains), `createdAt` (Descending) | Collection |
 
 ## Participant Tracking
 
