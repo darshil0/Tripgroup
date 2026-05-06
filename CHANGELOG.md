@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-05-06
+
+### Added
+- **Indexing Strategy**: Documented comprehensive Firestore composite index requirements in `docs/FIRESTORE_INDEXES.md` for `trips`, `participants`, and `messages`.
+- **Structured Observability**: Implemented transaction-level logging for `joinTrip` operations to track capacity enforcement in real-time.
+- **Graceful UI Fallback**: Enhanced Trip Creation flow with descriptive error states and manual entry prompts when AI recommendations are unavailable.
+
 ## [1.4.0] - 2026-05-06
 
 ### Fixed & Hardened
