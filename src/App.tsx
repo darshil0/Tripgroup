@@ -25,7 +25,7 @@ import {
   Shield,
   ListChecks
 } from 'lucide-react';
-import { db, handleFirestoreError, OperationType } from './lib/firebase';
+import { db, handleAppError, OperationType } from './lib/firebase';
 import { 
   collection, 
   query, 
@@ -38,7 +38,9 @@ import {
   DocumentData,
   updateDoc,
   deleteDoc,
-  getDocs
+  getDocs,
+  orderBy,
+  runTransaction
 } from 'firebase/firestore';
 import { 
   Trip, 
@@ -49,7 +51,7 @@ import {
   Message,
   Task 
 } from './types';
-import { cn } from './lib/utils';
+import { cn, formatDate, toTimestampNumber } from './lib/utils';
 import { format } from 'date-fns';
 import { getTripRecommendations, Recommendation } from './services/geminiService';
 
@@ -154,17 +156,69 @@ function Dashboard() {
 
   useEffect(() => {
     if (!user) return;
+
+    // Handle Join Trip from URL
+    const checkJoinLink = async () => {
+      const path = window.location.pathname;
+      if (path.startsWith('/join/')) {
+        const tripId = path.split('/')[2];
+        if (tripId) {
+          try {
+            await runTransaction(db, async (transaction) => {
+              const tripRef = doc(db, 'trips', tripId);
+              const tripSnap = await transaction.get(tripRef);
+
+              if (!tripSnap.exists()) throw new Error("Trip not found");
+
+              const tripData = tripSnap.data() as Trip;
+              const participantsRef = collection(db, 'trips', tripId, 'participants');
+              const participantsSnap = await getDocs(participantsRef);
+
+              if (participantsSnap.size >= (tripData.groupSize || 4)) {
+                throw new Error("Trip is full");
+              }
+
+              const participantRef = doc(db, 'trips', tripId, 'participants', user.uid);
+              const participantSnap = await transaction.get(participantRef);
+
+              if (participantSnap.exists()) {
+                 // Already joined
+              } else {
+                transaction.set(participantRef, {
+                  userId: user.uid,
+                  displayName: user.displayName,
+                  photoURL: user.photoURL,
+                  role: ParticipantRole.MEMBER,
+                  status: ParticipantStatus.JOINED,
+                  paid: false,
+                  amountPaid: 0,
+                  joinedAt: serverTimestamp()
+                });
+              }
+            });
+            setToast({ message: "Joined Trip Successfully", type: 'success' });
+          } catch (e: any) {
+            console.error(e);
+            setToast({ message: e.message || "Join failed", type: 'error' });
+          } finally {
+            window.history.replaceState({}, '', '/');
+          }
+        }
+      }
+    };
+
+    checkJoinLink();
     
     // In production, we'd use a composite index and filter by participant userId
     // For this MVP, we fetch trips where user is admin or listen to all for visibility
     const q = query(
       collection(db, 'trips'),
+      orderBy('createdAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedTrips = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as unknown as Trip))
-        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        .map(doc => ({ id: doc.id, ...doc.data() } as unknown as Trip));
       setTrips(fetchedTrips);
     }, (error) => {
       console.error(error);
@@ -283,20 +337,21 @@ function Dashboard() {
 
       <AnimatePresence>
         {isCreating && (
-          <CreateTripModal onClose={() => setIsCreating(false)} />
+          <CreateTripModal onClose={() => setIsCreating(false)} setToast={setToast} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function CreateTripModal({ onClose }: { onClose: () => void }) {
+function CreateTripModal({ onClose, setToast }: { onClose: () => void, setToast: (t: any) => void }) {
   const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     name: '',
     destination: '',
     budget: 500,
+    groupSize: 4,
     preferences: ''
   });
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
@@ -305,7 +360,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
   const handleNext = async () => {
     if (step === 1) {
       setLoadingAI(true);
-      const suggestions = await getTripRecommendations(4, formData.budget, formData.destination || 'anywhere warm');
+      const suggestions = await getTripRecommendations(formData.groupSize, formData.budget, formData.destination || 'anywhere warm');
       setRecommendations(suggestions);
       setLoadingAI(false);
       setStep(2);
@@ -319,10 +374,11 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         name: formData.name || (chosen ? `Trip to ${chosen.destination}` : 'New Adventure'),
         destination: chosen ? chosen.destination : formData.destination,
         budget: chosen ? chosen.estimatedCost : Number(formData.budget),
+        groupSize: Number(formData.groupSize),
         status: TripStatus.PLANNING,
         adminId: user.uid,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         paidAmount: 0,
         totalAmountDue: 0
       };
@@ -338,12 +394,13 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         status: ParticipantStatus.JOINED,
         paid: false,
         amountPaid: 0,
-        joinedAt: Date.now()
+        joinedAt: serverTimestamp()
       });
 
       onClose();
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'trips');
+      const appErr = handleAppError(error, OperationType.CREATE);
+      setToast({ message: appErr.message, type: 'error' });
     }
   };
 
@@ -385,21 +442,40 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
                   value={formData.destination}
                   onChange={e => setFormData({ ...formData, destination: e.target.value })}
                 />
-                <div className="space-y-4 pt-4">
-                  <div className="flex justify-between items-end">
-                    <span className="micro-label">Budget Allocation</span>
-                    <span className="text-2xl font-serif italic text-brand text-gradient tracking-tighter">${formData.budget}pp</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end">
+                      <span className="micro-label">Budget Allocation</span>
+                      <span className="text-2xl font-serif italic text-brand text-gradient tracking-tighter">${formData.budget}pp</span>
+                    </div>
+                    <div className="relative pt-2">
+                      <input
+                        type="range"
+                        min="100"
+                        max="5000"
+                        step="100"
+                        className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
+                        value={formData.budget}
+                        onChange={e => setFormData({ ...formData, budget: Number(e.target.value) })}
+                      />
+                    </div>
                   </div>
-                  <div className="relative pt-2">
-                    <input 
-                      type="range" 
-                      min="100" 
-                      max="5000" 
-                      step="100"
-                      className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
-                      value={formData.budget}
-                      onChange={e => setFormData({ ...formData, budget: Number(e.target.value) })}
-                    />
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end">
+                      <span className="micro-label">Group Size</span>
+                      <span className="text-2xl font-serif italic text-brand text-gradient tracking-tighter">{formData.groupSize} explorers</span>
+                    </div>
+                    <div className="relative pt-2">
+                      <input
+                        type="range"
+                        min="1"
+                        max="20"
+                        step="1"
+                        className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
+                        value={formData.groupSize}
+                        onChange={e => setFormData({ ...formData, groupSize: Number(e.target.value) })}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -532,14 +608,17 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       setParticipants(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Participant)));
     });
     const mUnsubscribe = onSnapshot(
-      query(collection(db, 'trips', trip.id, 'messages')), 
+      query(collection(db, 'trips', trip.id, 'messages'), orderBy('createdAt', 'asc')),
       (snap) => {
-        setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Message)).sort((a,b) => (a.createdAt as number || 0) - (b.createdAt as number || 0)));
+        setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Message)));
       }
     );
-    const tUnsubscribe = onSnapshot(collection(db, 'trips', trip.id, 'tasks'), (snap) => {
-      setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Task)).sort((a,b) => (b.createdAt as number || 0) - (a.createdAt as number || 0)));
-    });
+    const tUnsubscribe = onSnapshot(
+      query(collection(db, 'trips', trip.id, 'tasks'), orderBy('createdAt', 'asc')),
+      (snap) => {
+        setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Task)));
+      }
+    );
 
     return () => {
       pUnsubscribe();
@@ -592,6 +671,20 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
     }
   };
 
+  const finalizeBookings = async () => {
+    if (!user || trip.adminId !== user.uid) return;
+    try {
+      await updateDoc(doc(db, 'trips', trip.id), {
+        status: TripStatus.CONFIRMED,
+        updatedAt: serverTimestamp()
+      });
+      setToast({ message: "Bookings Finalized", type: 'success' });
+    } catch (e) {
+      console.error(e);
+      setToast({ message: "Failed to finalize", type: 'error' });
+    }
+  };
+
   const copyTripLink = () => {
     const link = `${window.location.origin}/join/${trip.id}`;
     navigator.clipboard.writeText(link);
@@ -609,8 +702,9 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         status: ParticipantStatus.JOINED
       });
       setIsInsuranceModalOpen(false);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'participant');
+    } catch (error) {
+      const appErr = handleAppError(error, OperationType.UPDATE);
+      setToast({ message: appErr.message, type: 'error' });
     }
   };
 
@@ -653,7 +747,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
               </div>
               <div className="flex items-center gap-3 bg-white/5 py-2 px-4 rounded-full border border-white/10 text-white/60">
                 <Calendar className="w-3.5 h-3.5 text-brand" />
-                {trip.startDate ? format(new Date(trip.startDate), 'MMM dd, yyyy') : 'Schedule TBD'}
+                {trip.startDate ? formatDate(trip.startDate, 'MMM dd, yyyy') : 'Schedule TBD'}
               </div>
               <div className="flex items-center gap-3 bg-brand/10 py-2 px-4 rounded-full border border-brand/20 text-brand">
                 <Users className="w-3.5 h-3.5" />
@@ -752,7 +846,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                             <h4 className={cn("text-lg font-light tracking-tight", task.completed && "line-through text-white/40")}>{task.title}</h4>
                             {task.dueDate && (
                               <div className="flex items-center gap-2 mt-1 micro-label text-[8px] opacity-40">
-                                <Calendar className="w-2.5 h-2.5" /> Due: {format(new Date(task.dueDate), 'MMM dd')}
+                                <Calendar className="w-2.5 h-2.5" /> Due: {formatDate(task.dueDate, 'MMM dd')}
                               </div>
                             )}
                           </div>
@@ -898,13 +992,19 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 </div>
 
                 {/* Admin Quick Action */}
-                <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
-                  <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
-                  <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
-                  <button className="w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all">
-                    Finalize Bookings
-                  </button>
-                </div>
+                {user?.uid === trip.adminId && (
+                  <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
+                    <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
+                    <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
+                    <button
+                      onClick={finalizeBookings}
+                      disabled={trip.status !== TripStatus.PLANNING}
+                      className="w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all disabled:opacity-50"
+                    >
+                      {trip.status === TripStatus.PLANNING ? 'Finalize Bookings' : 'Bookings Confirmed'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -945,7 +1045,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                         <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">{m.userName}</span>
                         {m.createdAt && (
                           <span className="text-[8px] font-mono text-white/10 uppercase">
-                            {format(m.createdAt as number || Date.now(), 'HH:mm')}
+                            {formatDate(m.createdAt, 'HH:mm')}
                           </span>
                         )}
                      </div>

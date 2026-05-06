@@ -4,7 +4,6 @@ import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfigFile from '../../firebase-applet-config.json';
 
 // Support both environment variables and the config file
-// Environment variables are preferred to avoid secret scanning issues in repo exports
 const firebaseConfig = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigFile.projectId,
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigFile.appId,
@@ -19,18 +18,6 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth();
 
-// Test connection as required by CRITICAL directive
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
-}
-testConnection();
-
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -40,40 +27,31 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
+export interface AppError {
+  message: string;
+  code?: string;
+  operation?: OperationType;
+  raw?: any;
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
+export function handleAppError(error: unknown, operation?: OperationType): AppError {
+  console.error('App Error:', error);
+
+  if (error instanceof Error) {
+    if (error.message.includes('permission-denied')) {
+      return { message: "Access Denied: You don't have permission for this action.", code: 'PERMISSION_DENIED', operation };
+    }
+    if (error.message.includes('not-found')) {
+      return { message: "Resource not found.", code: 'NOT_FOUND', operation };
+    }
+    return { message: error.message, operation, raw: error };
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+
+  return { message: String(error), operation, raw: error };
+}
+
+// Deprecated - kept for compatibility during migration
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const err = handleAppError(error, operationType);
+  throw new Error(JSON.stringify(err));
 }
