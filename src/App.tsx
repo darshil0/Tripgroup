@@ -25,7 +25,7 @@ import {
   Shield,
   ListChecks
 } from 'lucide-react';
-import { db, handleFirestoreError, OperationType, normalizeData } from './lib/firebase';
+import { db, handleFirestoreError, handleAppError, OperationType, normalizeData } from './lib/firebase';
 import { 
   collection, 
   query, 
@@ -719,6 +719,8 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       handleFirestoreError(e, OperationType.UPDATE, `trips/${trip.id}`);
     }
   };
+
+  const finalizeBookings = finalizeTrip;
 
   const copyTripLink = () => {
     const link = `${window.location.origin}/join/${trip.id}`;
