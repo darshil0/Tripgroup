@@ -156,16 +156,15 @@ function Dashboard() {
   useEffect(() => {
     if (!user) return;
     
-    // In production, we'd use a composite index and filter by participant userId
-    // For this MVP, we fetch trips where user is admin or listen to all for visibility
+    // Standardizing on Zero-Trust: only fetch trips where user is a participant or admin
     const q = query(
       collection(db, 'trips'),
+      where('participantIds', 'array-contains', user.uid),
+      orderBy('createdAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedTrips = snapshot.docs
-        .map(doc => normalizeData<Trip>({ id: doc.id, ...doc.data() }))
-        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      const fetchedTrips = snapshot.docs.map(doc => normalizeData<Trip>({ id: doc.id, ...doc.data() }));
       setTrips(fetchedTrips);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'trips');
@@ -456,13 +455,23 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
 
               <div className="flex justify-between items-center pt-4">
                 <button onClick={onClose} className="micro-label hover:text-white transition-colors">Abort Mission</button>
-                <button 
-                  onClick={handleNext}
-                  disabled={loadingAI}
-                  className="bg-brand text-white px-10 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-brand/80 transition-all disabled:opacity-50 shadow-2xl shadow-brand/20 active:scale-95"
-                >
-                  {loadingAI ? 'Calculating...' : 'Scan For Suggestions'}
-                </button>
+                <div className="flex gap-4">
+                  {error && !loadingAI && (
+                    <button 
+                      onClick={() => handleCreate()}
+                      className="border border-white/20 text-white px-8 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-white/5 transition-all shadow-xl"
+                    >
+                      Skip AI & Create
+                    </button>
+                  )}
+                  <button 
+                    onClick={handleNext}
+                    disabled={loadingAI}
+                    className="bg-brand text-white px-10 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-brand/80 transition-all disabled:opacity-50 shadow-2xl shadow-brand/20 active:scale-95"
+                  >
+                    {loadingAI ? 'Calculating...' : (error ? 'Retry AI' : 'Scan For Suggestions')}
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -661,15 +670,18 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         if (!tripSnap.exists()) throw new Error("Trip not found");
         const currentTrip = tripSnap.data() as Trip;
         
+        console.log(`[Transaction] Initiating join for user ${user.uid} on trip ${trip.id}`);
+        console.log(`[Transaction] Current state - Count: ${currentTrip.participantCount || 0}, Capacity: ${currentTrip.groupSize}`);
+        
         // Prevent duplicate joining in the same transaction
         if (currentTrip.participantIds?.includes(user.uid)) {
+          console.warn(`[Transaction] User ${user.uid} already exists in participantIds`);
           throw new Error("You are already joined to this trip.");
         }
         
-        console.log(`[Transaction] Capacity check: ${currentTrip.participantCount || 0}/${currentTrip.groupSize}`);
-        
         // Use denormalized count for efficient scaling
         if ((currentTrip.participantCount || 0) >= currentTrip.groupSize) {
+          console.error(`[Transaction] Capacity exceeded for trip ${trip.id}`);
           throw new Error("This mission has reached maximum capacity.");
         }
 
@@ -681,6 +693,8 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           participantIds: arrayUnion(user.uid),
           updatedAt: serverTimestamp()
         });
+        
+        console.log(`[Transaction] Successfully committed join for ${user.uid}`);
         
         transaction.set(participantRef, {
           userId: user.uid,

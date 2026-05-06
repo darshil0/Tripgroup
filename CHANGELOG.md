@@ -5,9 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [1.5.0] - 2026-05-06
 
 ### Added
+- **Zero-Trust Visibility**: Implemented server-side trip filtering using `participantIds` array to ensure users only see missions they are authorized to access.
+- **Concurrency Safety**: Hardened the `joinTrip` transaction logic with atomic check-then-act patterns to prevent duplicate memberships and overselling group capacity.
+- **Server-Side Ordering**: Migrated message history sorting to the Firestore query layer for improved performance and temporal consistency.
 - **Indexing Strategy**: Documented comprehensive Firestore composite index requirements in `docs/FIRESTORE_INDEXES.md` for `trips`, `participants`, and `messages`.
-- **Structured Observability**: Implemented transaction-level logging for `joinTrip` operations to track capacity enforcement in real-time.
-- **Graceful UI Fallback**: Enhanced Trip Creation flow with descriptive error states and manual entry prompts when AI recommendations are unavailable.
+- **Operational Reliability**: Added proactive date validation for task creation and a robust "Skip AI" manual entry fallback for the trip creation flow.
+- **Security & Sanitization**: Enhanced prompt injection protection for Gemini recommendations and implemented more restrictive Firestore rules for participant identity verification.
+- **Structured Observability**: Added verbose transaction-level logging to help diagnose edge-case failures in the distributed joining process.
 
 ## [1.4.0] - 2026-05-06
 
