@@ -35,6 +35,7 @@ import {
   serverTimestamp, 
   doc, 
   setDoc,
+  orderBy,
   updateDoc,
   deleteDoc,
   getDocs
@@ -155,10 +156,10 @@ function Dashboard() {
   useEffect(() => {
     if (!user) return;
     
-    // In production, we'd use a composite index and filter by participant userId
-    // For this MVP, we fetch trips where user is admin or listen to all for visibility
+    // Secure query: Only fetch trips where the user is a participant
     const q = query(
       collection(db, 'trips'),
+      where('participantIds', 'array-contains', user.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -341,6 +342,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         budget: chosen ? chosen.estimatedCost : Number(formData.budget),
         groupSize: Number(formData.groupSize),
         participantCount: 1, // Start with admin
+        participantIds: [user.uid],
         status: TripStatus.PLANNING,
         adminId: user.uid,
         createdAt: serverTimestamp(),
@@ -580,9 +582,12 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       setParticipants(snap.docs.map(d => normalizeData<Participant>({ id: d.id, ...d.data() })));
     });
     const mUnsubscribe = onSnapshot(
-      query(collection(db, 'trips', trip.id, 'messages')), 
+      query(
+        collection(db, 'trips', trip.id, 'messages'),
+        orderBy('createdAt', 'asc')
+      ),
       (snap) => {
-        setMessages(snap.docs.map(d => normalizeData<Message>({ id: d.id, ...d.data() })).sort((a,b) => (a.createdAt as number || 0) - (b.createdAt as number || 0)));
+        setMessages(snap.docs.map(d => normalizeData<Message>({ id: d.id, ...d.data() })));
       },
       (err) => handleFirestoreError(err, OperationType.LIST, `trips/${trip.id}/messages`)
     );
@@ -644,12 +649,19 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
   const joinTrip = async () => {
     if (!user) return;
     try {
-      const { runTransaction, increment } = await import('firebase/firestore');
+      const { runTransaction, increment, arrayUnion } = await import('firebase/firestore');
       await runTransaction(db, async (transaction) => {
         const tripRef = doc(db, 'trips', trip.id);
-        const tripSnap = await transaction.get(tripRef);
+        const participantRef = doc(db, 'trips', trip.id, 'participants', user.uid);
+
+        const [tripSnap, participantSnap] = await Promise.all([
+          transaction.get(tripRef),
+          transaction.get(participantRef)
+        ]);
         
         if (!tripSnap.exists()) throw new Error("Trip not found");
+        if (participantSnap.exists()) throw new Error("You are already part of this mission.");
+
         const currentTrip = tripSnap.data() as Trip;
         
         console.log(`[Transaction] Capacity check: ${currentTrip.participantCount || 0}/${currentTrip.groupSize}`);
@@ -659,11 +671,10 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           throw new Error("This mission has reached maximum capacity.");
         }
 
-        const participantRef = doc(db, 'trips', trip.id, 'participants', user.uid);
-        
-        // Atomically increment the count and create the participant record
+        // Atomically increment the count, add to participantIds, and create the participant record
         transaction.update(tripRef, { 
           participantCount: increment(1),
+          participantIds: arrayUnion(user.uid),
           updatedAt: serverTimestamp()
         });
         
