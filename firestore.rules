@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Trip Access Helpers
+    function isTripParticipant(tripId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/trips/$(tripId)/participants/$(request.auth.uid));
+    }
+
+    function isTripAdmin(tripId) {
+      return isSignedIn() && 
+        get(/databases/$(database)/documents/trips/$(tripId)/participants/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // 3. Entity Validations
+    function isValidTrip(data) {
+      return data.keys().hasAll(['name', 'destination', 'adminId', 'status', 'createdAt', 'updatedAt']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.destination is string && data.destination.size() <= 200 &&
+             data.adminId == request.auth.uid &&
+             data.status in ['planning', 'confirmed', 'completed', 'cancelled'];
+    }
+
+    function isValidParticipant(data) {
+      return data.keys().hasAll(['userId', 'role', 'status']) &&
+             data.userId is string &&
+             data.role in ['admin', 'member'] &&
+             data.status in ['invited', 'joined', 'declined'];
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['text', 'userId', 'userName', 'createdAt']) &&
+             data.text is string && data.text.size() <= 1000 &&
+             data.userId == request.auth.uid;
+    }
+
+    // 4. Collection Rules
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && 
+        incoming().keys().hasAll(['displayName', 'email', 'createdAt']) &&
+        incoming().email is string;
+      allow update: if isOwner(userId) && 
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL']);
+    }
+
+    // Trips
+    match /trips/{tripId} {
+      allow get: if isSignedIn(); // Allow discovery? No, actually participants only for detail
+      allow list: if isSignedIn(); // Filtering is handled in the rule for resource.data if needed, but here trips aren't private yet?
+      // Actually, per Pillar 8: Secure List Queries
+      allow read: if isTripParticipant(tripId);
+      
+      allow create: if isSignedIn() && isValidTrip(incoming());
+      
+      allow update: if isTripAdmin(tripId) && isValidTrip(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'destination', 'startDate', 'endDate', 'budget', 'status', 'updatedAt', 'totalAmountDue', 'paidAmount'])
+      );
+      
+      // Participants Sub-collection
+      match /participants/{userId} {
+        allow read: if isTripParticipant(tripId);
+        allow create: if isSignedIn() && (request.auth.uid == userId || isTripAdmin(tripId)) && isValidParticipant(incoming());
+        allow update: if (isOwner(userId) || isTripAdmin(tripId)) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'amountPaid', 'paid', 'insuranceSelected'])
+        );
+        allow delete: if isTripAdmin(tripId) && userId != request.auth.uid;
+      }
+
+      // Messages Sub-collection
+      match /messages/{messageId} {
+        allow read: if isTripParticipant(tripId);
+        allow create: if isTripParticipant(tripId) && isValidMessage(incoming());
+      }
+
+      // Documents Sub-collection
+      match /documents/{docId} {
+        allow read: if isTripParticipant(tripId);
+        allow create: if isTripParticipant(tripId) && 
+          incoming().keys().hasAll(['name', 'url', 'uploadedById', 'createdAt']) &&
+          incoming().uploadedById == request.auth.uid;
+        allow delete: if isTripAdmin(tripId) || (isTripParticipant(tripId) && existing().uploadedById == request.auth.uid);
+      }
+    }
+  }
+}

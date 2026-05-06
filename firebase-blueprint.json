@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "Trip": {
+      "title": "Trip",
+      "description": "Represents a group holiday booking.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the trip." },
+        "destination": { "type": "string", "description": "Destination city or country." },
+        "startDate": { "type": "string", "format": "date-time", "description": "When the trip starts." },
+        "endDate": { "type": "string", "format": "date-time", "description": "When the trip ends." },
+        "budget": { "type": "number", "description": "Per-person target budget." },
+        "status": { "type": "string", "enum": ["planning", "confirmed", "completed", "cancelled"], "description": "Current state of the trip." },
+        "adminId": { "type": "string", "description": "UID of the trip creator." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "totalAmountDue": { "type": "number", "description": "Total cost of the booking." },
+        "paidAmount": { "type": "number", "description": "Total amount collected from group." }
+      },
+      "required": ["name", "destination", "adminId", "status"]
+    },
+    "Participant": {
+      "title": "Participant",
+      "description": "A user who is part of a trip.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "member"] },
+        "status": { "type": "string", "enum": ["invited", "joined", "declined"] },
+        "paid": { "type": "boolean" },
+        "amountPaid": { "type": "number" },
+        "insuranceSelected": { "type": "boolean", "description": "Whether the user opted for trip insurance." },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "role", "status"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Coordination messages within a trip.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["text", "userId"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "Tickets, passes, and booking confirmations.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "type": { "type": "string", "description": "e.g., flight, hotel, excursion" },
+        "uploadedById": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "url", "uploadedById"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Public user info.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["displayName", "email"]
+    }
+  },
+  "firestore": {
+    "/trips/{tripId}": {
+      "schema": "Trip",
+      "description": "Main trip data."
+    },
+    "/trips/{tripId}/participants/{userId}": {
+      "schema": "Participant",
+      "description": "Users joined to this trip."
+    },
+    "/trips/{tripId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Real-time coordination."
+    },
+    "/trips/{tripId}/documents/{docId}": {
+      "schema": "Document",
+      "description": "Shared trip documents."
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile data."
+    }
+  }
+}
