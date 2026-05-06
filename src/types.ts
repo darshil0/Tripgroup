@@ -31,6 +31,7 @@ export interface Trip {
   startDate?: string;
   endDate?: string;
   budget: number;
+  groupSize: number; // Added groupSize
   status: TripStatus;
   adminId: string;
   createdAt: number;

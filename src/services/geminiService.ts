@@ -20,13 +20,25 @@ export interface Recommendation {
   activities: string[];
 }
 
+/**
+ * Sanitizes input text to prevent prompt injection or broken JSON requests.
+ */
+function sanitizeInput(text: string): string {
+  return text.replace(/[<>]/g, "").slice(0, 500);
+}
+
 export async function getTripRecommendations(groupSize: number, budgetPerPerson: number, preferences: string): Promise<Recommendation[]> {
-  const prompt = `Suggest 3 group holiday destinations for a group of ${groupSize} people with a budget of $${budgetPerPerson} per person. Preferences: ${preferences}. Return a JSON array of objects with destination, description, estimatedCost (per person), and activities (array of strings).`;
+  const cleanPreferences = sanitizeInput(preferences);
+  const prompt = `Suggest 3 group holiday destinations for a group of ${groupSize} people with a budget of $${budgetPerPerson} per person. Preferences: ${cleanPreferences}. Return a JSON array of objects with destination, description, estimatedCost (per person), and activities (array of strings).`;
+
+  // Timeout handling using AbortController
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
 
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-flash-latest", // Use stable alias
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -49,9 +61,19 @@ export async function getTripRecommendations(groupSize: number, budgetPerPerson:
       }
     });
 
-    return JSON.parse(response.text || "[]");
+    clearTimeout(timeoutId);
+    
+    if (!response.text) return [];
+    
+    const parsed = JSON.parse(response.text);
+    return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
-    console.error("Gemini Error:", error);
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error("Gemini Request Timed Out");
+    } else {
+      console.error("Gemini Error:", error);
+    }
     return [];
   }
 }

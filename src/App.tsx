@@ -25,7 +25,7 @@ import {
   Shield,
   ListChecks
 } from 'lucide-react';
-import { db, handleFirestoreError, OperationType } from './lib/firebase';
+import { db, handleFirestoreError, OperationType, normalizeData } from './lib/firebase';
 import { 
   collection, 
   query, 
@@ -163,12 +163,11 @@ function Dashboard() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedTrips = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() } as unknown as Trip))
+        .map(doc => normalizeData<Trip>({ id: doc.id, ...doc.data() }))
         .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setTrips(fetchedTrips);
     }, (error) => {
-      console.error(error);
-      setToast({ message: "Sync error", type: 'error' });
+      handleFirestoreError(error, OperationType.LIST, 'trips');
     });
 
     return () => unsubscribe();
@@ -297,6 +296,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
     name: '',
     destination: '',
     budget: 500,
+    groupSize: 4, // Added groupSize
     preferences: ''
   });
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
@@ -305,7 +305,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
   const handleNext = async () => {
     if (step === 1) {
       setLoadingAI(true);
-      const suggestions = await getTripRecommendations(4, formData.budget, formData.destination || 'anywhere warm');
+      const suggestions = await getTripRecommendations(formData.groupSize, formData.budget, formData.destination || 'anywhere warm');
       setRecommendations(suggestions);
       setLoadingAI(false);
       setStep(2);
@@ -319,6 +319,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         name: formData.name || (chosen ? `Trip to ${chosen.destination}` : 'New Adventure'),
         destination: chosen ? chosen.destination : formData.destination,
         budget: chosen ? chosen.estimatedCost : Number(formData.budget),
+        groupSize: Number(formData.groupSize),
         status: TripStatus.PLANNING,
         adminId: user.uid,
         createdAt: Date.now(),
@@ -385,21 +386,42 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
                   value={formData.destination}
                   onChange={e => setFormData({ ...formData, destination: e.target.value })}
                 />
-                <div className="space-y-4 pt-4">
-                  <div className="flex justify-between items-end">
-                    <span className="micro-label">Budget Allocation</span>
-                    <span className="text-2xl font-serif italic text-brand text-gradient tracking-tighter">${formData.budget}pp</span>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end">
+                      <span className="micro-label">Budget Allocation</span>
+                      <span className="text-xl font-serif italic text-brand text-gradient tracking-tighter">${formData.budget}pp</span>
+                    </div>
+                    <div className="relative pt-2">
+                      <input 
+                        type="range" 
+                        min="100" 
+                        max="5000" 
+                        step="100"
+                        className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
+                        value={formData.budget}
+                        onChange={e => setFormData({ ...formData, budget: Number(e.target.value) })}
+                      />
+                    </div>
                   </div>
-                  <div className="relative pt-2">
-                    <input 
-                      type="range" 
-                      min="100" 
-                      max="5000" 
-                      step="100"
-                      className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
-                      value={formData.budget}
-                      onChange={e => setFormData({ ...formData, budget: Number(e.target.value) })}
-                    />
+
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end">
+                      <span className="micro-label">Group Capacity</span>
+                      <span className="text-xl font-serif italic text-brand text-gradient tracking-tighter">{formData.groupSize} People</span>
+                    </div>
+                    <div className="relative pt-2">
+                      <input 
+                        type="range" 
+                        min="1" 
+                        max="50" 
+                        step="1"
+                        className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
+                        value={formData.groupSize}
+                        onChange={e => setFormData({ ...formData, groupSize: Number(e.target.value) })}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -529,16 +551,17 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
 
   useEffect(() => {
     const pUnsubscribe = onSnapshot(collection(db, 'trips', trip.id, 'participants'), (snap) => {
-      setParticipants(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Participant)));
+      setParticipants(snap.docs.map(d => normalizeData<Participant>({ id: d.id, ...d.data() })));
     });
     const mUnsubscribe = onSnapshot(
       query(collection(db, 'trips', trip.id, 'messages')), 
       (snap) => {
-        setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Message)).sort((a,b) => (a.createdAt as number || 0) - (b.createdAt as number || 0)));
-      }
+        setMessages(snap.docs.map(d => normalizeData<Message>({ id: d.id, ...d.data() })).sort((a,b) => (a.createdAt as number || 0) - (b.createdAt as number || 0)));
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, `trips/${trip.id}/messages`)
     );
     const tUnsubscribe = onSnapshot(collection(db, 'trips', trip.id, 'tasks'), (snap) => {
-      setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Task)).sort((a,b) => (b.createdAt as number || 0) - (a.createdAt as number || 0)));
+      setTasks(snap.docs.map(d => normalizeData<Task>({ id: d.id, ...d.data() })).sort((a,b) => (b.createdAt as number || 0) - (a.createdAt as number || 0)));
     });
 
     return () => {
@@ -589,6 +612,55 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       });
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const joinTrip = async () => {
+    if (!user) return;
+    try {
+      const { runTransaction } = await import('firebase/firestore');
+      await runTransaction(db, async (transaction) => {
+        const tripRef = doc(db, 'trips', trip.id);
+        const tripSnap = await transaction.get(tripRef);
+        
+        if (!tripSnap.exists()) throw new Error("Trip not found");
+        const currentTrip = tripSnap.data() as Trip;
+        
+        const participantsRef = collection(db, 'trips', trip.id, 'participants');
+        const participantsSnap = await getDocs(participantsRef); // Note: Transaction limits might hit if too many, but small groups are fine
+        
+        if (participantsSnap.size >= currentTrip.groupSize) {
+          throw new Error("This mission has reached maximum capacity.");
+        }
+
+        const participantRef = doc(db, 'trips', trip.id, 'participants', user.uid);
+        transaction.set(participantRef, {
+          userId: user.uid,
+          displayName: user.displayName,
+          photoURL: user.photoURL,
+          role: ParticipantRole.MEMBER,
+          status: ParticipantStatus.JOINED,
+          paid: false,
+          amountPaid: 0,
+          joinedAt: Date.now()
+        });
+      });
+      setToast({ message: "Welcome to the crew", type: 'success' });
+    } catch (e: any) {
+      setToast({ message: e.message || "Failed to join", type: 'error' });
+    }
+  };
+
+  const finalizeTrip = async () => {
+    if (trip.adminId !== user?.uid) return;
+    try {
+      await updateDoc(doc(db, 'trips', trip.id), {
+        status: TripStatus.CONFIRMED,
+        updatedAt: Date.now()
+      });
+      setToast({ message: "Journey Finalized", type: 'success' });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `trips/${trip.id}`);
     }
   };
 
@@ -653,26 +725,52 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
               </div>
               <div className="flex items-center gap-3 bg-white/5 py-2 px-4 rounded-full border border-white/10 text-white/60">
                 <Calendar className="w-3.5 h-3.5 text-brand" />
-                {trip.startDate ? format(new Date(trip.startDate), 'MMM dd, yyyy') : 'Schedule TBD'}
+                {trip.startDate ? format(new Date(trip.startDate), 'MMM dd, yyyy') : 'TBD'}
               </div>
               <div className="flex items-center gap-3 bg-brand/10 py-2 px-4 rounded-full border border-brand/20 text-brand">
                 <Users className="w-3.5 h-3.5" />
-                {participants.length} Active Participants
+                {participants.length} / {trip.groupSize} Members
               </div>
             </div>
           </motion.div>
 
           <div className="flex gap-4">
-            <button 
-              onClick={copyTripLink}
-              className="h-16 w-16 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5 hover:border-white/20 transition-all group"
-              title="Copy Invite Link"
-            >
-              <Share2 className="w-6 h-6 text-white/40 group-hover:text-white transition-colors" />
-            </button>
-            <button className="px-10 py-4 bg-brand text-white rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-brand/80 transition-all shadow-2xl shadow-brand/30 active:scale-95">
-              Admin Control
-            </button>
+            {!currentUserParticipant ? (
+              <button 
+                onClick={joinTrip}
+                disabled={trip.status !== TripStatus.PLANNING}
+                className={cn(
+                  "px-12 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.4em] transition-all shadow-2xl active:scale-95 flex items-center gap-2",
+                  trip.status === TripStatus.PLANNING 
+                    ? "bg-brand text-white hover:bg-brand/80 shadow-brand/30" 
+                    : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
+                )}
+              >
+                {trip.status === TripStatus.PLANNING ? (
+                  <><Plus className="w-4 h-4" /> Join Initiative</>
+                ) : (
+                  "Manifest Locked"
+                )}
+              </button>
+            ) : (
+              <>
+                <button 
+                  onClick={copyTripLink}
+                  className="h-16 w-16 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5 hover:border-white/20 transition-all group"
+                  title="Copy Invite Link"
+                >
+                  <Share2 className="w-6 h-6 text-white/40 group-hover:text-white transition-colors" />
+                </button>
+                {trip.adminId === user?.uid && trip.status === TripStatus.PLANNING && (
+                  <button 
+                    onClick={finalizeTrip}
+                    className="px-10 py-4 bg-brand text-white rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-brand/80 transition-all shadow-2xl shadow-brand/30 active:scale-95"
+                  >
+                    Lock & Finalize
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>
