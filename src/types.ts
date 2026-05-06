@@ -21,7 +21,7 @@ export interface UserProfile {
   displayName: string;
   email: string;
   photoURL?: string;
-  createdAt: number;
+  createdAt: any;
 }
 
 export interface Trip {
@@ -34,8 +34,8 @@ export interface Trip {
   groupSize: number; // Added groupSize
   status: TripStatus;
   adminId: string;
-  createdAt: number;
-  updatedAt: number;
+  createdAt: any;
+  updatedAt: any;
   totalAmountDue?: number;
   paidAmount?: number;
 }
@@ -50,7 +50,7 @@ export interface Participant {
   paid: boolean;
   amountPaid: number;
   insuranceSelected?: boolean;
-  joinedAt?: number;
+  joinedAt?: any;
 }
 
 export interface Message {
@@ -58,16 +58,16 @@ export interface Message {
   text: string;
   userId: string;
   userName: string;
-  createdAt: number;
+  createdAt: any;
 }
 
 export interface Task {
   id: string;
   title: string;
   description: string;
-  dueDate: string;
+  dueDate: any;
   completed: boolean;
-  createdAt: number;
+  createdAt: any;
   createdBy: string;
 }
 

@@ -44,7 +44,8 @@ service cloud.firestore {
              data.destination is string && data.destination.size() <= 200 &&
              data.groupSize is int && data.groupSize >= 1 && data.groupSize <= 50 &&
              data.adminId == request.auth.uid &&
-             data.status in ['planning', 'confirmed', 'completed', 'cancelled'];
+             data.status in ['planning', 'confirmed', 'completed', 'cancelled'] &&
+             data.groupSize is int && data.groupSize >= 1 && data.groupSize <= 50;
     }
 
     function isValidParticipant(data) {
@@ -80,9 +81,8 @@ service cloud.firestore {
 
     // Trips
     match /trips/{tripId} {
-      allow get: if isSignedIn(); // Allow discovery? No, actually participants only for detail
-      allow list: if isSignedIn(); // Filtering is handled in the rule for resource.data if needed, but here trips aren't private yet?
-      // Actually, per Pillar 8: Secure List Queries
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
       allow read: if isTripParticipant(tripId);
       
       allow create: if isSignedIn() && isValidTrip(incoming());
@@ -98,7 +98,9 @@ service cloud.firestore {
       // Participants Sub-collection
       match /participants/{userId} {
         allow read: if isTripParticipant(tripId);
-        allow create: if isSignedIn() && (request.auth.uid == userId || isTripAdmin(tripId)) && isValidParticipant(incoming());
+        allow create: if isSignedIn() && (request.auth.uid == userId || isTripAdmin(tripId)) &&
+                      isValidParticipant(incoming()) &&
+                      !exists(/databases/$(database)/documents/trips/$(tripId)/participants/$(userId));
         allow update: if (isOwner(userId) || isTripAdmin(tripId)) && (
           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'amountPaid', 'paid', 'insuranceSelected'])
         );

@@ -38,7 +38,9 @@ import {
   DocumentData,
   updateDoc,
   deleteDoc,
-  getDocs
+  getDocs,
+  orderBy,
+  runTransaction
 } from 'firebase/firestore';
 import { 
   Trip, 
@@ -49,7 +51,7 @@ import {
   Message,
   Task 
 } from './types';
-import { cn } from './lib/utils';
+import { cn, formatDate, toTimestampNumber } from './lib/utils';
 import { format } from 'date-fns';
 import { getTripRecommendations, Recommendation } from './services/geminiService';
 
@@ -154,11 +156,64 @@ function Dashboard() {
 
   useEffect(() => {
     if (!user) return;
+
+    // Handle Join Trip from URL
+    const checkJoinLink = async () => {
+      const path = window.location.pathname;
+      if (path.startsWith('/join/')) {
+        const tripId = path.split('/')[2];
+        if (tripId) {
+          try {
+            await runTransaction(db, async (transaction) => {
+              const tripRef = doc(db, 'trips', tripId);
+              const tripSnap = await transaction.get(tripRef);
+
+              if (!tripSnap.exists()) throw new Error("Trip not found");
+
+              const tripData = tripSnap.data() as Trip;
+              const participantsRef = collection(db, 'trips', tripId, 'participants');
+              const participantsSnap = await getDocs(participantsRef);
+
+              if (participantsSnap.size >= (tripData.groupSize || 4)) {
+                throw new Error("Trip is full");
+              }
+
+              const participantRef = doc(db, 'trips', tripId, 'participants', user.uid);
+              const participantSnap = await transaction.get(participantRef);
+
+              if (participantSnap.exists()) {
+                 // Already joined
+              } else {
+                transaction.set(participantRef, {
+                  userId: user.uid,
+                  displayName: user.displayName,
+                  photoURL: user.photoURL,
+                  role: ParticipantRole.MEMBER,
+                  status: ParticipantStatus.JOINED,
+                  paid: false,
+                  amountPaid: 0,
+                  joinedAt: serverTimestamp()
+                });
+              }
+            });
+            setToast({ message: "Joined Trip Successfully", type: 'success' });
+          } catch (e: any) {
+            console.error(e);
+            setToast({ message: e.message || "Join failed", type: 'error' });
+          } finally {
+            window.history.replaceState({}, '', '/');
+          }
+        }
+      }
+    };
+
+    checkJoinLink();
     
     // In production, we'd use a composite index and filter by participant userId
     // For this MVP, we fetch trips where user is admin or listen to all for visibility
     const q = query(
       collection(db, 'trips'),
+      orderBy('createdAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -282,14 +337,14 @@ function Dashboard() {
 
       <AnimatePresence>
         {isCreating && (
-          <CreateTripModal onClose={() => setIsCreating(false)} />
+          <CreateTripModal onClose={() => setIsCreating(false)} setToast={setToast} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function CreateTripModal({ onClose }: { onClose: () => void }) {
+function CreateTripModal({ onClose, setToast }: { onClose: () => void, setToast: (t: any) => void }) {
   const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
@@ -322,8 +377,8 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         groupSize: Number(formData.groupSize),
         status: TripStatus.PLANNING,
         adminId: user.uid,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         paidAmount: 0,
         totalAmountDue: 0
       };
@@ -339,12 +394,13 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         status: ParticipantStatus.JOINED,
         paid: false,
         amountPaid: 0,
-        joinedAt: Date.now()
+        joinedAt: serverTimestamp()
       });
 
       onClose();
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'trips');
+      const appErr = handleAppError(error, OperationType.CREATE);
+      setToast({ message: appErr.message, type: 'error' });
     }
   };
 
@@ -554,7 +610,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       setParticipants(snap.docs.map(d => normalizeData<Participant>({ id: d.id, ...d.data() })));
     });
     const mUnsubscribe = onSnapshot(
-      query(collection(db, 'trips', trip.id, 'messages')), 
+      query(collection(db, 'trips', trip.id, 'messages'), orderBy('createdAt', 'asc')),
       (snap) => {
         setMessages(snap.docs.map(d => normalizeData<Message>({ id: d.id, ...d.data() })).sort((a,b) => (a.createdAt as number || 0) - (b.createdAt as number || 0)));
       },
@@ -681,8 +737,9 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         status: ParticipantStatus.JOINED
       });
       setIsInsuranceModalOpen(false);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.UPDATE, 'participant');
+    } catch (error) {
+      const appErr = handleAppError(error, OperationType.UPDATE);
+      setToast({ message: appErr.message, type: 'error' });
     }
   };
 
@@ -850,7 +907,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                             <h4 className={cn("text-lg font-light tracking-tight", task.completed && "line-through text-white/40")}>{task.title}</h4>
                             {task.dueDate && (
                               <div className="flex items-center gap-2 mt-1 micro-label text-[8px] opacity-40">
-                                <Calendar className="w-2.5 h-2.5" /> Due: {format(new Date(task.dueDate), 'MMM dd')}
+                                <Calendar className="w-2.5 h-2.5" /> Due: {formatDate(task.dueDate, 'MMM dd')}
                               </div>
                             )}
                           </div>
@@ -996,13 +1053,19 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 </div>
 
                 {/* Admin Quick Action */}
-                <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
-                  <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
-                  <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
-                  <button className="w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all">
-                    Finalize Bookings
-                  </button>
-                </div>
+                {user?.uid === trip.adminId && (
+                  <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
+                    <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
+                    <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
+                    <button
+                      onClick={finalizeBookings}
+                      disabled={trip.status !== TripStatus.PLANNING}
+                      className="w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all disabled:opacity-50"
+                    >
+                      {trip.status === TripStatus.PLANNING ? 'Finalize Bookings' : 'Bookings Confirmed'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1043,7 +1106,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                         <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">{m.userName}</span>
                         {m.createdAt && (
                           <span className="text-[8px] font-mono text-white/10 uppercase">
-                            {format(m.createdAt as number || Date.now(), 'HH:mm')}
+                            {formatDate(m.createdAt, 'HH:mm')}
                           </span>
                         )}
                      </div>

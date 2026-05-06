@@ -58,23 +58,30 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-export interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
+export interface AppError {
+  message: string;
+  code?: string;
+  operation?: OperationType;
+  raw?: any;
 }
 
+export function handleAppError(error: unknown, operation?: OperationType): AppError {
+  console.error('App Error:', error);
+
+  if (error instanceof Error) {
+    if (error.message.includes('permission-denied')) {
+      return { message: "Access Denied: You don't have permission for this action.", code: 'PERMISSION_DENIED', operation };
+    }
+    if (error.message.includes('not-found')) {
+      return { message: "Resource not found.", code: 'NOT_FOUND', operation };
+    }
+    return { message: error.message, operation, raw: error };
+  }
+
+  return { message: String(error), operation, raw: error };
+}
+
+// Deprecated - kept for compatibility during migration
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
