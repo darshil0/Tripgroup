@@ -19,20 +19,31 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth();
 
 /**
- * Normalizes Firestore data by converting all Timestamps to numbers (ms).
+ * Normalizes Firestore data by converting all Timestamps to numbers (ms) recursively.
  */
 export function normalizeData<T>(data: any): T {
-  if (!data) return data;
+  if (!data || typeof data !== 'object') return data;
   
-  const result = { ...data };
-  for (const key in result) {
-    const val = result[key];
-    if (val instanceof Timestamp) {
-      result[key] = val.toMillis();
-    } else if (typeof val === 'object' && val !== null && 'seconds' in val && 'nanoseconds' in val) {
-      // Handle plain objects that look like Timestamps (e.g. from JSON or edge cases)
-      result[key] = new Timestamp(val.seconds, val.nanoseconds).toMillis();
+  if (data instanceof Timestamp) {
+    return data.toMillis() as any;
+  }
+
+  // Handle plain objects that look like Timestamps
+  if ('seconds' in data && 'nanoseconds' in data && Object.keys(data).length === 2) {
+    try {
+      return new Timestamp(data.seconds, data.nanoseconds).toMillis() as any;
+    } catch {
+      // Not a real timestamp, proceed
     }
+  }
+
+  if (Array.isArray(data)) {
+    return data.map(item => normalizeData(item)) as any;
+  }
+
+  const result: any = {};
+  for (const key in data) {
+    result[key] = normalizeData(data[key]);
   }
   return result as T;
 }
@@ -58,35 +69,21 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-export interface AppError {
-  message: string;
-  code?: string;
-  operation?: OperationType;
-  raw?: any;
-}
-
-export function handleAppError(error: unknown, operation?: OperationType): AppError {
-  console.error('App Error:', error);
-
-  if (error instanceof Error) {
-    if (error.message.includes('permission-denied')) {
-      return { message: "Access Denied: You don't have permission for this action.", code: 'PERMISSION_DENIED', operation };
-    }
-    if (error.message.includes('not-found')) {
-      return { message: "Resource not found.", code: 'NOT_FOUND', operation };
-    }
-    return { message: error.message, operation, raw: error };
-  }
-
-  return { message: String(error), operation, raw: error };
-}
-
-// Deprecated - kept for compatibility during migration
 export interface FirestoreErrorInfo {
   error: string;
-  authInfo: any;
   operationType: OperationType;
   path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {

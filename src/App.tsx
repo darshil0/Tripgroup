@@ -25,7 +25,7 @@ import {
   Shield,
   ListChecks
 } from 'lucide-react';
-import { db, handleFirestoreError, handleAppError, OperationType, normalizeData } from './lib/firebase';
+import { db, handleFirestoreError, OperationType, normalizeData } from './lib/firebase';
 import { 
   collection, 
   query, 
@@ -35,12 +35,9 @@ import {
   serverTimestamp, 
   doc, 
   setDoc,
-  DocumentData,
   updateDoc,
   deleteDoc,
-  getDocs,
-  orderBy,
-  runTransaction
+  getDocs
 } from 'firebase/firestore';
 import { 
   Trip, 
@@ -51,8 +48,9 @@ import {
   Message,
   Task 
 } from './types';
-import { cn, formatDate, toTimestampNumber } from './lib/utils';
-import { format } from 'date-fns';
+import { cn } from './lib/utils';
+import { format, isValid } from 'date-fns';
+import { APP_CONFIG } from './constants';
 import { getTripRecommendations, Recommendation } from './services/geminiService';
 
 // --- Components ---
@@ -156,64 +154,11 @@ function Dashboard() {
 
   useEffect(() => {
     if (!user) return;
-
-    // Handle Join Trip from URL
-    const checkJoinLink = async () => {
-      const path = window.location.pathname;
-      if (path.startsWith('/join/')) {
-        const tripId = path.split('/')[2];
-        if (tripId) {
-          try {
-            await runTransaction(db, async (transaction) => {
-              const tripRef = doc(db, 'trips', tripId);
-              const tripSnap = await transaction.get(tripRef);
-
-              if (!tripSnap.exists()) throw new Error("Trip not found");
-
-              const tripData = tripSnap.data() as Trip;
-              const participantsRef = collection(db, 'trips', tripId, 'participants');
-              const participantsSnap = await getDocs(participantsRef);
-
-              if (participantsSnap.size >= (tripData.groupSize || 4)) {
-                throw new Error("Trip is full");
-              }
-
-              const participantRef = doc(db, 'trips', tripId, 'participants', user.uid);
-              const participantSnap = await transaction.get(participantRef);
-
-              if (participantSnap.exists()) {
-                 // Already joined
-              } else {
-                transaction.set(participantRef, {
-                  userId: user.uid,
-                  displayName: user.displayName,
-                  photoURL: user.photoURL,
-                  role: ParticipantRole.MEMBER,
-                  status: ParticipantStatus.JOINED,
-                  paid: false,
-                  amountPaid: 0,
-                  joinedAt: serverTimestamp()
-                });
-              }
-            });
-            setToast({ message: "Joined Trip Successfully", type: 'success' });
-          } catch (e: any) {
-            console.error(e);
-            setToast({ message: e.message || "Join failed", type: 'error' });
-          } finally {
-            window.history.replaceState({}, '', '/');
-          }
-        }
-      }
-    };
-
-    checkJoinLink();
     
     // In production, we'd use a composite index and filter by participant userId
     // For this MVP, we fetch trips where user is admin or listen to all for visibility
     const q = query(
       collection(db, 'trips'),
-      orderBy('createdAt', 'desc')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -337,21 +282,22 @@ function Dashboard() {
 
       <AnimatePresence>
         {isCreating && (
-          <CreateTripModal onClose={() => setIsCreating(false)} setToast={setToast} />
+          <CreateTripModal onClose={() => setIsCreating(false)} />
         )}
       </AnimatePresence>
     </div>
   );
 }
 
-function CreateTripModal({ onClose, setToast }: { onClose: () => void, setToast: (t: any) => void }) {
+function CreateTripModal({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
   const [step, setStep] = useState(1);
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     destination: '',
     budget: 500,
-    groupSize: 4, // Added groupSize
+    groupSize: 4,
     preferences: ''
   });
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
@@ -369,12 +315,20 @@ function CreateTripModal({ onClose, setToast }: { onClose: () => void, setToast:
 
   const handleCreate = async (chosen?: Recommendation) => {
     if (!user) return;
+    
+    // Frontend validation
+    if (formData.groupSize < APP_CONFIG.MIN_GROUP_SIZE || formData.groupSize > APP_CONFIG.MAX_GROUP_SIZE) {
+      setError(`Group size must be between ${APP_CONFIG.MIN_GROUP_SIZE} and ${APP_CONFIG.MAX_GROUP_SIZE}`);
+      return;
+    }
+
     try {
       const tripData = {
         name: formData.name || (chosen ? `Trip to ${chosen.destination}` : 'New Adventure'),
         destination: chosen ? chosen.destination : formData.destination,
         budget: chosen ? chosen.estimatedCost : Number(formData.budget),
         groupSize: Number(formData.groupSize),
+        participantCount: 1, // Start with admin
         status: TripStatus.PLANNING,
         adminId: user.uid,
         createdAt: serverTimestamp(),
@@ -399,8 +353,7 @@ function CreateTripModal({ onClose, setToast }: { onClose: () => void, setToast:
 
       onClose();
     } catch (error) {
-      const appErr = handleAppError(error, OperationType.CREATE);
-      setToast({ message: appErr.message, type: 'error' });
+      handleFirestoreError(error, OperationType.CREATE, 'trips');
     }
   };
 
@@ -426,6 +379,11 @@ function CreateTripModal({ onClose, setToast }: { onClose: () => void, setToast:
               </div>
 
               <div className="space-y-6">
+                {error && (
+                  <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl text-xs font-mono animate-pulse">
+                    [ERROR] {error}
+                  </div>
+                )}
                 <div className="relative">
                   <div className="absolute -left-6 top-1/2 -translate-y-1/2 w-1 h-8 bg-brand rounded-full" />
                   <input 
@@ -470,8 +428,8 @@ function CreateTripModal({ onClose, setToast }: { onClose: () => void, setToast:
                     <div className="relative pt-2">
                       <input 
                         type="range" 
-                        min="1" 
-                        max="50" 
+                        min={APP_CONFIG.MIN_GROUP_SIZE} 
+                        max={APP_CONFIG.MAX_GROUP_SIZE} 
                         step="1"
                         className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
                         value={formData.groupSize}
@@ -610,7 +568,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       setParticipants(snap.docs.map(d => normalizeData<Participant>({ id: d.id, ...d.data() })));
     });
     const mUnsubscribe = onSnapshot(
-      query(collection(db, 'trips', trip.id, 'messages'), orderBy('createdAt', 'asc')),
+      query(collection(db, 'trips', trip.id, 'messages')), 
       (snap) => {
         setMessages(snap.docs.map(d => normalizeData<Message>({ id: d.id, ...d.data() })).sort((a,b) => (a.createdAt as number || 0) - (b.createdAt as number || 0)));
       },
@@ -674,7 +632,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
   const joinTrip = async () => {
     if (!user) return;
     try {
-      const { runTransaction } = await import('firebase/firestore');
+      const { runTransaction, increment } = await import('firebase/firestore');
       await runTransaction(db, async (transaction) => {
         const tripRef = doc(db, 'trips', trip.id);
         const tripSnap = await transaction.get(tripRef);
@@ -682,14 +640,19 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         if (!tripSnap.exists()) throw new Error("Trip not found");
         const currentTrip = tripSnap.data() as Trip;
         
-        const participantsRef = collection(db, 'trips', trip.id, 'participants');
-        const participantsSnap = await getDocs(participantsRef); // Note: Transaction limits might hit if too many, but small groups are fine
-        
-        if (participantsSnap.size >= currentTrip.groupSize) {
+        // Use denormalized count for efficient scaling
+        if ((currentTrip.participantCount || 0) >= currentTrip.groupSize) {
           throw new Error("This mission has reached maximum capacity.");
         }
 
         const participantRef = doc(db, 'trips', trip.id, 'participants', user.uid);
+        
+        // Atomically increment the count and create the participant record
+        transaction.update(tripRef, { 
+          participantCount: increment(1),
+          updatedAt: serverTimestamp()
+        });
+        
         transaction.set(participantRef, {
           userId: user.uid,
           displayName: user.displayName,
@@ -698,12 +661,16 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           status: ParticipantStatus.JOINED,
           paid: false,
           amountPaid: 0,
-          joinedAt: Date.now()
+          joinedAt: serverTimestamp()
         });
       });
       setToast({ message: "Welcome to the crew", type: 'success' });
     } catch (e: any) {
-      setToast({ message: e.message || "Failed to join", type: 'error' });
+      if (e.code === 'permission-denied') {
+        handleFirestoreError(e, OperationType.WRITE, `trips/${trip.id}/participants`);
+      } else {
+        setToast({ message: e.message || "Failed to join", type: 'error' });
+      }
     }
   };
 
@@ -712,15 +679,13 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
     try {
       await updateDoc(doc(db, 'trips', trip.id), {
         status: TripStatus.CONFIRMED,
-        updatedAt: Date.now()
+        updatedAt: serverTimestamp()
       });
       setToast({ message: "Journey Finalized", type: 'success' });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `trips/${trip.id}`);
     }
   };
-
-  const finalizeBookings = finalizeTrip;
 
   const copyTripLink = () => {
     const link = `${window.location.origin}/join/${trip.id}`;
@@ -739,9 +704,8 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         status: ParticipantStatus.JOINED
       });
       setIsInsuranceModalOpen(false);
-    } catch (error) {
-      const appErr = handleAppError(error, OperationType.UPDATE);
-      setToast({ message: appErr.message, type: 'error' });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'participant');
     }
   };
 
@@ -909,7 +873,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                             <h4 className={cn("text-lg font-light tracking-tight", task.completed && "line-through text-white/40")}>{task.title}</h4>
                             {task.dueDate && (
                               <div className="flex items-center gap-2 mt-1 micro-label text-[8px] opacity-40">
-                                <Calendar className="w-2.5 h-2.5" /> Due: {formatDate(task.dueDate, 'MMM dd')}
+                                <Calendar className="w-2.5 h-2.5" /> Due: {isValid(new Date(task.dueDate)) ? format(new Date(task.dueDate), 'MMM dd') : 'Soon'}
                               </div>
                             )}
                           </div>
@@ -1055,19 +1019,13 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 </div>
 
                 {/* Admin Quick Action */}
-                {user?.uid === trip.adminId && (
-                  <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
-                    <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
-                    <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
-                    <button
-                      onClick={finalizeBookings}
-                      disabled={trip.status !== TripStatus.PLANNING}
-                      className="w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all disabled:opacity-50"
-                    >
-                      {trip.status === TripStatus.PLANNING ? 'Finalize Bookings' : 'Bookings Confirmed'}
-                    </button>
-                  </div>
-                )}
+                <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
+                  <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
+                  <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
+                  <button className="w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all">
+                    Finalize Bookings
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1108,7 +1066,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                         <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">{m.userName}</span>
                         {m.createdAt && (
                           <span className="text-[8px] font-mono text-white/10 uppercase">
-                            {formatDate(m.createdAt, 'HH:mm')}
+                            {format(m.createdAt as number || Date.now(), 'HH:mm')}
                           </span>
                         )}
                      </div>
@@ -1227,7 +1185,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         )}
         {isInsuranceModalOpen && (
           <InsuranceUpsellModal 
-            price={45} 
+            price={APP_CONFIG.INSURANCE_PRICE} 
             onConfirm={(withInsurance) => handlePayment(withInsurance)} 
             onCancel={() => setIsInsuranceModalOpen(false)} 
           />

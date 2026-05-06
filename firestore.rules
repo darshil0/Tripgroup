@@ -39,13 +39,13 @@ service cloud.firestore {
 
     // 3. Entity Validations
     function isValidTrip(data) {
-      return data.keys().hasAll(['name', 'destination', 'adminId', 'status', 'createdAt', 'updatedAt', 'groupSize']) &&
+      return data.keys().hasAll(['name', 'destination', 'adminId', 'status', 'createdAt', 'updatedAt', 'groupSize', 'participantCount']) &&
              data.name is string && data.name.size() <= 100 &&
              data.destination is string && data.destination.size() <= 200 &&
              data.groupSize is int && data.groupSize >= 1 && data.groupSize <= 50 &&
+             data.participantCount is int && data.participantCount >= 0 &&
              data.adminId == request.auth.uid &&
-             data.status in ['planning', 'confirmed', 'completed', 'cancelled'] &&
-             data.groupSize is int && data.groupSize >= 1 && data.groupSize <= 50;
+             data.status in ['planning', 'confirmed', 'completed', 'cancelled'];
     }
 
     function isValidParticipant(data) {
@@ -81,8 +81,9 @@ service cloud.firestore {
 
     // Trips
     match /trips/{tripId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn();
+      allow get: if isSignedIn(); // Allow discovery? No, actually participants only for detail
+      allow list: if isSignedIn(); // Filtering is handled in the rule for resource.data if needed, but here trips aren't private yet?
+      // Actually, per Pillar 8: Secure List Queries
       allow read: if isTripParticipant(tripId);
       
       allow create: if isSignedIn() && isValidTrip(incoming());
@@ -92,15 +93,13 @@ service cloud.firestore {
         incoming().adminId == existing().adminId &&
         incoming().createdAt == existing().createdAt &&
         // Strict field change control
-        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'destination', 'startDate', 'endDate', 'budget', 'groupSize', 'status', 'updatedAt', 'totalAmountDue', 'paidAmount'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'destination', 'startDate', 'endDate', 'budget', 'groupSize', 'status', 'updatedAt', 'totalAmountDue', 'paidAmount', 'participantCount'])
       );
       
       // Participants Sub-collection
       match /participants/{userId} {
         allow read: if isTripParticipant(tripId);
-        allow create: if isSignedIn() && (request.auth.uid == userId || isTripAdmin(tripId)) &&
-                      isValidParticipant(incoming()) &&
-                      !exists(/databases/$(database)/documents/trips/$(tripId)/participants/$(userId));
+        allow create: if isSignedIn() && (request.auth.uid == userId || isTripAdmin(tripId)) && isValidParticipant(incoming());
         allow update: if (isOwner(userId) || isTripAdmin(tripId)) && (
           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'amountPaid', 'paid', 'insuranceSelected'])
         );

@@ -11,6 +11,7 @@
         "endDate": { "type": "string", "format": "date", "description": "When the trip ends." },
         "budget": { "type": "number", "description": "Per-person target budget." },
         "groupSize": { "type": "integer", "description": "Maximum number of participants." },
+        "participantCount": { "type": "integer", "description": "Current number of participants." },
         "status": { "type": "string", "enum": ["planning", "confirmed", "completed", "cancelled"], "description": "Current state of the trip." },
         "adminId": { "type": "string", "description": "UID of the trip creator." },
         "createdAt": { "type": "number" },
