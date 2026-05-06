@@ -2,14 +2,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.6.0] - 2026-05-06
-
-### Hardened & Fixed
-- **Security - Zero-Trust Visibility**: Implemented `participantIds` array on Trip documents to enforce zero-trust visibility rules. Firestore rules now strictly limit trip listing and access to authorized participants only.
-- **Race Condition - Atomic Membership**: Re-engineered `joinTrip` transaction logic to include an atomic membership pre-check, preventing duplicate participant records and ensuring accurate capacity counts under high concurrency.
-- **Performance - Server-Side Message Ordering**: Migrated message sorting from client-side to the Firestore query layer (`orderBy('createdAt', 'asc')`), improving scalability and ensuring correct chronological order on slow networks.
-- **Data Integrity**: Updated trip creation and joining paths to maintain the `participantIds` index atomically.
-
 ## [1.5.0] - 2026-05-06
 
 ### Added

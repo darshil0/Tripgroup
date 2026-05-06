@@ -24,7 +24,13 @@ export interface Recommendation {
  * Sanitizes input text to prevent prompt injection or broken JSON requests.
  */
 function sanitizeInput(text: string): string {
-  return text.replace(/[<>]/g, "").slice(0, 500);
+  if (!text) return "";
+  // Remove control characters, common injection tokens, and limit length
+  return text
+    .replace(/[<>{}|[\]\\^`]/g, "") // Remove common JSON/HTML control characters
+    .replace(/\b(system|user|assistant):\b/gi, "") // Prevent role-play injection
+    .slice(0, 300)
+    .trim();
 }
 
 export async function getTripRecommendations(groupSize: number, budgetPerPerson: number, preferences: string, retries = 2): Promise<Recommendation[]> {

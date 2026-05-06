@@ -35,10 +35,10 @@ import {
   serverTimestamp, 
   doc, 
   setDoc,
-  orderBy,
   updateDoc,
   deleteDoc,
-  getDocs
+  getDocs,
+  orderBy
 } from 'firebase/firestore';
 import { 
   Trip, 
@@ -156,10 +156,10 @@ function Dashboard() {
   useEffect(() => {
     if (!user) return;
     
-    // Secure query: Only fetch trips where the user is a participant
+    // In production, we'd use a composite index and filter by participant userId
+    // For this MVP, we fetch trips where user is admin or listen to all for visibility
     const q = query(
       collection(db, 'trips'),
-      where('participantIds', 'array-contains', user.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -342,7 +342,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         budget: chosen ? chosen.estimatedCost : Number(formData.budget),
         groupSize: Number(formData.groupSize),
         participantCount: 1, // Start with admin
-        participantIds: [user.uid],
+        participantIds: [user.uid], // For security rule filtering
         status: TripStatus.PLANNING,
         adminId: user.uid,
         createdAt: serverTimestamp(),
@@ -549,7 +549,7 @@ function InsuranceUpsellModal({ onConfirm, onCancel, price }: { onConfirm: (with
               onClick={() => onConfirm(true)}
               className="w-full py-4 bg-brand text-white font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand/80 transition-all shadow-xl shadow-brand/20"
             >
-              Add Protection (+${price})
+              Add Protection (+${APP_CONFIG.INSURANCE_PRICE})
             </button>
             <button 
               onClick={() => onConfirm(false)}
@@ -582,10 +582,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       setParticipants(snap.docs.map(d => normalizeData<Participant>({ id: d.id, ...d.data() })));
     });
     const mUnsubscribe = onSnapshot(
-      query(
-        collection(db, 'trips', trip.id, 'messages'),
-        orderBy('createdAt', 'asc')
-      ),
+      query(collection(db, 'trips', trip.id, 'messages'), orderBy('createdAt', 'asc')), 
       (snap) => {
         setMessages(snap.docs.map(d => normalizeData<Message>({ id: d.id, ...d.data() })));
       },
@@ -620,6 +617,13 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
 
   const createTask = async () => {
     if (!taskData.title.trim() || !user) return;
+    
+    // Date validation
+    if (taskData.dueDate && !isValid(new Date(taskData.dueDate))) {
+      setToast({ message: "Invalid date format", type: 'error' });
+      return;
+    }
+
     try {
       await addDoc(collection(db, 'trips', trip.id, 'tasks'), {
         ...taskData,
@@ -652,17 +656,15 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       const { runTransaction, increment, arrayUnion } = await import('firebase/firestore');
       await runTransaction(db, async (transaction) => {
         const tripRef = doc(db, 'trips', trip.id);
-        const participantRef = doc(db, 'trips', trip.id, 'participants', user.uid);
-
-        const [tripSnap, participantSnap] = await Promise.all([
-          transaction.get(tripRef),
-          transaction.get(participantRef)
-        ]);
+        const tripSnap = await transaction.get(tripRef);
         
         if (!tripSnap.exists()) throw new Error("Trip not found");
-        if (participantSnap.exists()) throw new Error("You are already part of this mission.");
-
         const currentTrip = tripSnap.data() as Trip;
+        
+        // Prevent duplicate joining in the same transaction
+        if (currentTrip.participantIds?.includes(user.uid)) {
+          throw new Error("You are already joined to this trip.");
+        }
         
         console.log(`[Transaction] Capacity check: ${currentTrip.participantCount || 0}/${currentTrip.groupSize}`);
         
@@ -671,7 +673,9 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           throw new Error("This mission has reached maximum capacity.");
         }
 
-        // Atomically increment the count, add to participantIds, and create the participant record
+        const participantRef = doc(db, 'trips', trip.id, 'participants', user.uid);
+        
+        // Atomically increment the count and maintain participant IDs for security rules
         transaction.update(tripRef, { 
           participantCount: increment(1),
           participantIds: arrayUnion(user.uid),
@@ -680,7 +684,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         
         transaction.set(participantRef, {
           userId: user.uid,
-          displayName: user.displayName,
+          displayName: user.displayName || 'Traveler',
           photoURL: user.photoURL,
           role: ParticipantRole.MEMBER,
           status: ParticipantStatus.JOINED,
@@ -724,7 +728,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       const pRef = doc(db, 'trips', trip.id, 'participants', user.uid);
       await updateDoc(pRef, {
         paid: true,
-        amountPaid: trip.budget + (withInsurance ? 45 : 0),
+        amountPaid: trip.budget + (withInsurance ? APP_CONFIG.INSURANCE_PRICE : 0),
         insuranceSelected: withInsurance,
         status: ParticipantStatus.JOINED
       });
@@ -738,7 +742,10 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
 
     const inviteLink = `${window.location.origin}/join/${trip.id}`;
 
-  const getInitials = (name: string) => name.split(' ').map(n => n[0]).join('').toUpperCase();
+  const getInitials = (name: string) => {
+    if (!name) return 'U';
+    return name.split(' ').filter(n => n.length > 0).map(n => n[0]).join('').toUpperCase();
+  };
 
   return (
     <div className="min-h-screen bg-[#050505] border-grid">
@@ -960,7 +967,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                       onClick={() => setIsInsuranceModalOpen(true)}
                       className="relative z-10 px-8 py-3 bg-brand text-white rounded-full font-bold uppercase text-[10px] tracking-widest hover:bg-brand/80 transition-all whitespace-nowrap"
                     >
-                      Insure for $45
+                      Insure for ${APP_CONFIG.INSURANCE_PRICE}
                     </button>
                   </motion.div>
                 )}
@@ -1044,13 +1051,21 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 </div>
 
                 {/* Admin Quick Action */}
-                <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
-                  <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
-                  <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
-                  <button className="w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all">
-                    Finalize Bookings
-                  </button>
-                </div>
+                {trip.adminId === user?.uid && (
+                  <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
+                    <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
+                    <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
+                    <button 
+                      onClick={finalizeTrip}
+                      disabled={trip.status !== TripStatus.PLANNING}
+                      className={cn(
+                        "w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all disabled:opacity-50",
+                      )}
+                    >
+                      Finalize Bookings
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}

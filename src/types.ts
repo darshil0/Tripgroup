@@ -33,7 +33,7 @@ export interface Trip {
   budget: number;
   groupSize: number;
   participantCount: number; // Denormalized count for scaling transactions
-  participantIds: string[]; // For security rules and efficient list queries
+  participantIds: string[]; // Added for security rule filtering
   status: TripStatus;
   adminId: string;
   createdAt: any; // Allow for serverTimestamp

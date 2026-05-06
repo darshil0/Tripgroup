@@ -29,15 +29,11 @@ service cloud.firestore {
 
     // 2. Trip Access Helpers
     function isTripParticipant(tripId) {
-      return isSignedIn() && (
-        exists(/databases/$(database)/documents/trips/$(tripId)/participants/$(request.auth.uid)) ||
-        request.auth.uid in get(/databases/$(database)/documents/trips/$(tripId)).data.participantIds
-      );
+      return isSignedIn() && (request.auth.uid in get(/databases/$(database)/documents/trips/$(tripId)).data.participantIds);
     }
 
     function isTripAdmin(tripId) {
-      return isSignedIn() && 
-        get(/databases/$(database)/documents/trips/$(tripId)/participants/$(request.auth.uid)).data.role == 'admin';
+      return isSignedIn() && get(/databases/$(database)/documents/trips/$(tripId)).data.adminId == request.auth.uid;
     }
 
     // 3. Entity Validations
@@ -47,6 +43,7 @@ service cloud.firestore {
              data.destination is string && data.destination.size() <= 200 &&
              data.groupSize is int && data.groupSize >= 1 && data.groupSize <= 50 &&
              data.participantCount is int && data.participantCount >= 0 &&
+             data.participantIds is list && data.participantIds.size() <= 50 &&
              data.adminId == request.auth.uid &&
              data.status in ['planning', 'confirmed', 'completed', 'cancelled'];
     }
@@ -84,11 +81,21 @@ service cloud.firestore {
 
     // Trips
     match /trips/{tripId} {
-      allow get: if isTripParticipant(tripId);
-      allow list: if isSignedIn() && request.auth.uid in resource.data.participantIds;
-      allow read: if isTripParticipant(tripId);
+      allow get: if isSignedIn() && (
+        resource.data.adminId == request.auth.uid || 
+        request.auth.uid in resource.data.participantIds
+      );
       
-      allow create: if isSignedIn() && isValidTrip(incoming());
+      allow list: if isSignedIn() && (
+        resource.data.adminId == request.auth.uid || 
+        request.auth.uid in resource.data.participantIds
+      );
+      
+      allow create: if isSignedIn() && isValidTrip(incoming()) && (
+        incoming().participantIds.size() == 1 &&
+        incoming().participantIds[0] == request.auth.uid &&
+        incoming().participantCount == 1
+      );
       
       allow update: if isTripAdmin(tripId) && isValidTrip(incoming()) && (
         // Prevent changing immutable fields
