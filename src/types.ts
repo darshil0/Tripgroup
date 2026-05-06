@@ -60,6 +60,16 @@ export interface Message {
   createdAt: number;
 }
 
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  dueDate: string;
+  completed: boolean;
+  createdAt: number;
+  createdBy: string;
+}
+
 export interface TripDocument {
   id: string;
   name: string;

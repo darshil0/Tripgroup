@@ -59,6 +59,12 @@ service cloud.firestore {
              data.userId == request.auth.uid;
     }
 
+    function isValidTask(data) {
+      return data.keys().hasAll(['title', 'completed', 'createdBy', 'createdAt']) &&
+             data.title is string && data.title.size() <= 200 &&
+             data.createdBy == request.auth.uid;
+    }
+
     // 4. Collection Rules
 
     // User Profiles
@@ -107,6 +113,16 @@ service cloud.firestore {
           incoming().keys().hasAll(['name', 'url', 'uploadedById', 'createdAt']) &&
           incoming().uploadedById == request.auth.uid;
         allow delete: if isTripAdmin(tripId) || (isTripParticipant(tripId) && existing().uploadedById == request.auth.uid);
+      }
+
+      // Tasks Sub-collection
+      match /tasks/{taskId} {
+        allow read: if isTripParticipant(tripId);
+        allow create: if isTripParticipant(tripId) && isValidTask(incoming());
+        allow update: if isTripParticipant(tripId) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['completed', 'title', 'description', 'dueDate'])
+        );
+        allow delete: if isTripAdmin(tripId) || (isTripParticipant(tripId) && existing().createdBy == request.auth.uid);
       }
     }
   }

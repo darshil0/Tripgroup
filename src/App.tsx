@@ -22,7 +22,8 @@ import {
   FileText,
   TrendingUp,
   Share2,
-  Shield
+  Shield,
+  ListChecks
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
 import { 
@@ -45,7 +46,8 @@ import {
   ParticipantRole, 
   ParticipantStatus,
   Participant,
-  Message 
+  Message,
+  Task 
 } from './types';
 import { cn } from './lib/utils';
 import { format } from 'date-fns';
@@ -517,9 +519,12 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
   const { user } = useAuth();
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'chat' | 'docs'>('overview');
   const [newMessage, setNewMessage] = useState('');
   const [isInsuranceModalOpen, setIsInsuranceModalOpen] = useState(false);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [taskData, setTaskData] = useState({ title: '', description: '', dueDate: '' });
   const [toast, setToast] = useState<{ message: string, type: 'info' | 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -532,10 +537,15 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Message)).sort((a,b) => (a.createdAt as number || 0) - (b.createdAt as number || 0)));
       }
     );
+    const tUnsubscribe = onSnapshot(collection(db, 'trips', trip.id, 'tasks'), (snap) => {
+      setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() } as unknown as Task)).sort((a,b) => (b.createdAt as number || 0) - (a.createdAt as number || 0)));
+    });
+
     return () => {
       pUnsubscribe();
       mUnsubscribe();
-    }
+      tUnsubscribe();
+    };
   }, [trip.id]);
 
   const sendMessage = async () => {
@@ -551,6 +561,34 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
     } catch (e) {
       console.error(e);
       setToast({ message: "Failed to send", type: 'error' });
+    }
+  };
+
+  const createTask = async () => {
+    if (!taskData.title.trim() || !user) return;
+    try {
+      await addDoc(collection(db, 'trips', trip.id, 'tasks'), {
+        ...taskData,
+        completed: false,
+        createdBy: user.uid,
+        createdAt: serverTimestamp()
+      });
+      setIsTaskModalOpen(false);
+      setTaskData({ title: '', description: '', dueDate: '' });
+      setToast({ message: "Task Created", type: 'success' });
+    } catch (e) {
+      console.error(e);
+      setToast({ message: "Failed to create task", type: 'error' });
+    }
+  };
+
+  const toggleTask = async (task: Task) => {
+    try {
+      await updateDoc(doc(db, 'trips', trip.id, 'tasks', task.id), {
+        completed: !task.completed
+      });
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -670,6 +708,65 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           {activeTab === 'overview' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
               <div className="lg:col-span-2 space-y-12">
+                {/* Mission Checklist */}
+                <div className="glass-card p-10 border-grid">
+                  <div className="flex justify-between items-baseline mb-10">
+                    <div>
+                      <h3 className="editorial-title text-4xl italic mb-2 tracking-tighter">Mission Checklist</h3>
+                      <p className="micro-label">Status: {tasks.filter(t => t.completed).length}/{tasks.length} Resolved</p>
+                    </div>
+                    <button 
+                      onClick={() => setIsTaskModalOpen(true)}
+                      className="text-brand hover:text-white transition-colors micro-label font-bold flex items-center gap-2"
+                    >
+                      <Plus className="w-3 h-3" /> Add Objective
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {tasks.length === 0 ? (
+                      <div className="py-20 flex flex-col items-center justify-center border border-dashed border-white/5 rounded-3xl bg-white/1 text-white/20">
+                        <ListChecks className="w-8 h-8 mb-4 opacity-50" />
+                        <p className="micro-label">No active objectives</p>
+                      </div>
+                    ) : (
+                      tasks.map((task, idx) => (
+                        <motion.div 
+                          key={task.id}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: idx * 0.05 }}
+                          onClick={() => toggleTask(task)}
+                          className={cn(
+                            "group p-6 rounded-2xl border transition-all cursor-pointer flex items-center gap-6",
+                            task.completed ? "bg-white/2 border-white/5 opacity-50" : "bg-white/5 border-white/10 hover:border-brand/40"
+                          )}
+                        >
+                          <div className={cn(
+                            "w-6 h-6 rounded-full border flex items-center justify-center transition-all",
+                            task.completed ? "bg-brand border-brand text-white" : "border-white/20 group-hover:border-brand"
+                          )}>
+                            {task.completed && <CheckCircle2 className="w-4 h-4" />}
+                          </div>
+                          <div className="flex-1">
+                            <h4 className={cn("text-lg font-light tracking-tight", task.completed && "line-through text-white/40")}>{task.title}</h4>
+                            {task.dueDate && (
+                              <div className="flex items-center gap-2 mt-1 micro-label text-[8px] opacity-40">
+                                <Calendar className="w-2.5 h-2.5" /> Due: {format(new Date(task.dueDate), 'MMM dd')}
+                              </div>
+                            )}
+                          </div>
+                          {task.description && (
+                            <div className="text-[10px] text-white/30 font-mono italic max-w-[200px] truncate">
+                              {task.description}
+                            </div>
+                          )}
+                        </motion.div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
                 {/* Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
                   <div className="glass-card p-6 border-l-4 border-l-brand">
@@ -815,6 +912,14 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           {activeTab === 'chat' && (
             <div className="flex flex-col h-[70vh] glass-card overflow-hidden">
                <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar bg-white/2 border-grid">
+                 <div className="flex justify-center mb-8">
+                    <button 
+                      onClick={() => setIsTaskModalOpen(true)}
+                      className="px-6 py-2 bg-brand/10 border border-brand/20 text-brand rounded-full micro-label font-bold hover:bg-brand hover:text-white transition-all shadow-xl shadow-brand/10"
+                    >
+                      + Create Mission Objective
+                    </button>
+                 </div>
                  {messages.length === 0 && (
                    <div className="h-full flex flex-col items-center justify-center text-white/10 italic">
                      <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-6 animate-float">
@@ -899,6 +1004,64 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
       </div>
 
       <AnimatePresence>
+        {isTaskModalOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-xl bg-black/60"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              className="glass-card w-full max-w-md p-10 shadow-2xl relative overflow-hidden bg-[#050505] border-white/10"
+            >
+              <div className="absolute inset-0 atmosphere opacity-20" />
+              <div className="relative z-10">
+                <h3 className="editorial-title text-4xl mb-6 italic">New Objective</h3>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="micro-label">Title</label>
+                    <input 
+                      autoFocus
+                      placeholder="e.g. Confirm Flight Transfers"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all text-white"
+                      value={taskData.title}
+                      onChange={e => setTaskData({ ...taskData, title: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="micro-label">Details</label>
+                    <textarea 
+                      placeholder="Add specific instructions..."
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all h-24 resize-none text-white"
+                      value={taskData.description}
+                      onChange={e => setTaskData({ ...taskData, description: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="micro-label">Deadline</label>
+                    <input 
+                      type="date"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all font-mono uppercase text-xs text-white"
+                      value={taskData.dueDate}
+                      onChange={e => setTaskData({ ...taskData, dueDate: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-between items-center pt-10">
+                  <button onClick={() => setIsTaskModalOpen(false)} className="micro-label hover:text-white transition-colors">Abort</button>
+                  <button 
+                    onClick={createTask}
+                    className="bg-brand text-white px-10 py-4 rounded-full font-bold uppercase text-[10px] tracking-widest hover:bg-brand/80 transition-all shadow-xl shadow-brand/20 active:scale-95"
+                  >
+                    Forge Task
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
         {isInsuranceModalOpen && (
           <InsuranceUpsellModal 
             price={45} 

@@ -72,6 +72,20 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["displayName", "email"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Logistics items to complete for the trip.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "dueDate": { "type": "string", "format": "date" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["title", "completed", "createdBy"]
     }
   },
   "firestore": {
@@ -90,6 +104,10 @@
     "/trips/{tripId}/documents/{docId}": {
       "schema": "Document",
       "description": "Shared trip documents."
+    },
+    "/trips/{tripId}/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Checklist of group tasks."
     },
     "/users/{userId}": {
       "schema": "UserProfile",
