@@ -6,16 +6,16 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './components/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Plus, 
-  MapPin, 
-  Calendar, 
-  Users, 
-  Wallet, 
-  ChevronRight, 
-  LogOut, 
-  Compass, 
-  Clock, 
+import {
+  Plus,
+  MapPin,
+  Calendar,
+  Users,
+  Wallet,
+  ChevronRight,
+  LogOut,
+  Compass,
+  Clock,
   CheckCircle2,
   AlertCircle,
   MessageSquare,
@@ -23,31 +23,34 @@ import {
   TrendingUp,
   Share2,
   Shield,
-  ListChecks
+  ListChecks,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType, normalizeData } from './lib/firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  serverTimestamp, 
-  doc, 
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+  doc,
   setDoc,
   updateDoc,
   deleteDoc,
-  getDocs,
-  orderBy
+  orderBy,
+  runTransaction,
+  increment,
+  arrayUnion,
 } from 'firebase/firestore';
-import { 
-  Trip, 
-  TripStatus, 
-  ParticipantRole, 
+import {
+  Trip,
+  TripStatus,
+  ParticipantRole,
   ParticipantStatus,
   Participant,
   Message,
-  Task 
+  Task,
+  TripDocument,
 } from './types';
 import { cn } from './lib/utils';
 import { format, isValid } from 'date-fns';
@@ -56,27 +59,41 @@ import { getTripRecommendations, Recommendation } from './services/geminiService
 
 // --- Components ---
 
-function Toast({ message, type = 'info', onClear }: { message: string, type?: 'info' | 'success' | 'error', onClear: () => void }) {
+function Toast({
+  message,
+  type = 'info',
+  onClear,
+}: {
+  message: string;
+  type?: 'info' | 'success' | 'error';
+  onClear: () => void;
+}) {
   useEffect(() => {
     const timer = setTimeout(onClear, 3000);
     return () => clearTimeout(timer);
   }, [onClear]);
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 50, x: '-50%' }}
       animate={{ opacity: 1, y: 0, x: '-50%' }}
       exit={{ opacity: 0, y: 50, x: '-50%' }}
       className={cn(
-        "fixed bottom-12 left-1/2 z-[100] px-6 py-3 rounded-full text-xs font-mono uppercase tracking-widest shadow-2xl flex items-center gap-3 border backdrop-blur-xl",
-        type === 'error' ? "bg-red-900/80 border-red-500 text-white" : 
-        type === 'success' ? "bg-green-900/80 border-green-500 text-white" :
-        "bg-brand/80 border-brand text-white"
+        'fixed bottom-12 left-1/2 z-[100] px-6 py-3 rounded-full text-xs font-mono uppercase tracking-widest shadow-2xl flex items-center gap-3 border backdrop-blur-xl',
+        type === 'error'
+          ? 'bg-red-900/80 border-red-500 text-white'
+          : type === 'success'
+            ? 'bg-green-900/80 border-green-500 text-white'
+            : 'bg-brand/80 border-brand text-white'
       )}
     >
-      {type === 'error' ? <AlertCircle className="w-4 h-4" /> : 
-       type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : 
-       <Compass className="w-4 h-4" />}
+      {type === 'error' ? (
+        <AlertCircle className="w-4 h-4" />
+      ) : type === 'success' ? (
+        <CheckCircle2 className="w-4 h-4" />
+      ) : (
+        <Compass className="w-4 h-4" />
+      )}
       {message}
     </motion.div>
   );
@@ -85,7 +102,7 @@ function Toast({ message, type = 'info', onClear }: { message: string, type?: 'i
 function LoadingScreen() {
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-[#050505] z-50">
-      <motion.div 
+      <motion.div
         animate={{ scale: [1, 1.2, 1], opacity: [1, 0.5, 1] }}
         transition={{ repeat: Infinity, duration: 1.5 }}
         className="text-brand flex flex-col items-center gap-4"
@@ -102,15 +119,17 @@ function Landing() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden px-6">
       <div className="absolute inset-0 atmosphere opacity-30 pointer-events-none" />
-      
-      <motion.div 
+
+      <motion.div
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         className="text-center max-w-4xl z-10"
       >
         <div className="flex items-center justify-center gap-2 mb-8">
           <span className="w-12 h-[1px] bg-white/20" />
-          <span className="uppercase text-[10px] tracking-[0.4em] text-white/50 font-medium">Elevating Group Travel</span>
+          <span className="uppercase text-[10px] tracking-[0.4em] text-white/50 font-medium">
+            Elevating Group Travel
+          </span>
           <span className="w-12 h-[1px] bg-white/20" />
         </div>
 
@@ -119,10 +138,11 @@ function Landing() {
         </h1>
 
         <p className="text-white/60 md:text-xl font-light mb-12 max-w-2xl mx-auto leading-relaxed">
-          The closed-loop ecosystem for group bookings. Handle payments, coordination, and documents without the chaos.
+          The closed-loop ecosystem for group bookings. Handle payments, coordination, and documents
+          without the chaos.
         </p>
 
-        <button 
+        <button
           onClick={signIn}
           className="group relative px-12 py-4 bg-white text-black font-medium overflow-hidden transition-transform active:scale-95"
         >
@@ -151,11 +171,14 @@ function Dashboard() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
-  const [toast, setToast] = useState<{ message: string, type: 'info' | 'success' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'info' | 'success' | 'error';
+  } | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    
+
     // Standardizing on Zero-Trust: only fetch trips where user is a participant or admin
     const q = query(
       collection(db, 'trips'),
@@ -163,12 +186,18 @@ function Dashboard() {
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedTrips = snapshot.docs.map(doc => normalizeData<Trip>({ id: doc.id, ...doc.data() }));
-      setTrips(fetchedTrips);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'trips');
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const fetchedTrips = snapshot.docs.map((doc) =>
+          normalizeData<Trip>({ id: doc.id, ...doc.data() })
+        );
+        setTrips(fetchedTrips);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'trips');
+      }
+    );
 
     return () => unsubscribe();
   }, [user]);
@@ -176,7 +205,7 @@ function Dashboard() {
   const copyTripLink = (id: string) => {
     const link = `${window.location.origin}/join/${id}`;
     navigator.clipboard.writeText(link);
-    setToast({ message: "Invite Link Copied", type: 'success' });
+    setToast({ message: 'Invite Link Copied', type: 'success' });
   };
 
   if (selectedTrip) return <TripDetail trip={selectedTrip} onBack={() => setSelectedTrip(null)} />;
@@ -184,7 +213,9 @@ function Dashboard() {
   return (
     <div className="min-h-screen px-6 py-12 max-w-7xl mx-auto border-grid">
       <AnimatePresence>
-        {toast && <Toast message={toast.message} type={toast.type} onClear={() => setToast(null)} />}
+        {toast && (
+          <Toast message={toast.message} type={toast.type} onClear={() => setToast(null)} />
+        )}
       </AnimatePresence>
 
       <header className="flex justify-between items-end mb-24 relative">
@@ -194,16 +225,18 @@ function Dashboard() {
             <span className="w-8 h-[1px] bg-brand/40" />
             <span className="micro-label">Welcome back, Captain</span>
           </div>
-          <h2 className="editorial-title text-5xl md:text-8xl">{user?.displayName?.split(' ')[0]}</h2>
+          <h2 className="editorial-title text-5xl md:text-8xl">
+            {user?.displayName?.split(' ')[0]}
+          </h2>
         </div>
         <div className="flex gap-4 relative z-10">
-          <button 
+          <button
             onClick={() => setIsCreating(true)}
             className="w-14 h-14 md:w-20 md:h-20 rounded-full border border-white/20 flex items-center justify-center hover:bg-brand hover:border-brand transition-all group shadow-xl shadow-brand/10"
           >
             <Plus className="w-6 h-6 group-hover:rotate-90 transition-transform" />
           </button>
-          <button 
+          <button
             onClick={logout}
             className="w-14 h-14 md:w-20 md:h-20 rounded-full border border-white/20 flex items-center justify-center hover:border-white/40 hover:bg-white/5 transition-all"
           >
@@ -215,7 +248,7 @@ function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12">
         <AnimatePresence mode="popLayout">
           {trips.length === 0 ? (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               className="col-span-full py-48 flex flex-col items-center justify-center border border-dashed border-white/10 rounded-[3rem] bg-white/2"
@@ -224,7 +257,7 @@ function Dashboard() {
                 <Compass className="w-10 h-10 text-brand" />
               </div>
               <p className="micro-label">No horizons discovered</p>
-              <button 
+              <button
                 onClick={() => setIsCreating(true)}
                 className="mt-8 px-8 py-3 bg-white text-black rounded-full font-bold uppercase text-[10px] tracking-widest hover:bg-brand hover:text-white transition-all shadow-2xl"
               >
@@ -245,7 +278,7 @@ function Dashboard() {
                   <div className="px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-[9px] font-bold uppercase tracking-[0.2em] shadow-lg shadow-brand/5">
                     {trip.status}
                   </div>
-                  <button 
+                  <button
                     onClick={(e) => {
                       e.stopPropagation();
                       copyTripLink(trip.id);
@@ -255,9 +288,11 @@ function Dashboard() {
                     <Share2 className="w-4 h-4" />
                   </button>
                 </div>
-                
+
                 <div className="flex-1">
-                  <h3 className="editorial-title text-4xl mb-4 group-hover:text-brand transition-all duration-500">{trip.name}</h3>
+                  <h3 className="editorial-title text-4xl mb-4 group-hover:text-brand transition-all duration-500">
+                    {trip.name}
+                  </h3>
                   <div className="flex items-center gap-3 text-white/40 text-xs font-mono uppercase tracking-widest">
                     <MapPin className="w-3.5 h-3.5 text-brand" />
                     {trip.destination}
@@ -281,9 +316,7 @@ function Dashboard() {
       </div>
 
       <AnimatePresence>
-        {isCreating && (
-          <CreateTripModal onClose={() => setIsCreating(false)} />
-        )}
+        {isCreating && <CreateTripModal onClose={() => setIsCreating(false)} />}
       </AnimatePresence>
     </div>
   );
@@ -298,7 +331,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
     destination: '',
     budget: 500,
     groupSize: 4,
-    preferences: ''
+    preferences: '',
   });
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loadingAI, setLoadingAI] = useState(false);
@@ -308,17 +341,25 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
       setLoadingAI(true);
       setError(null);
       try {
-        const suggestions = await getTripRecommendations(formData.groupSize, formData.budget, formData.destination || 'anywhere warm', APP_CONFIG.RETRY_ATTEMPTS);
-        
+        const suggestions = await getTripRecommendations(
+          formData.groupSize,
+          formData.budget,
+          formData.destination || 'anywhere warm',
+          APP_CONFIG.RETRY_ATTEMPTS
+        );
+
         if (suggestions.length === 0) {
-          setError("I couldn't generate recommendations right now. Please enter your trip details manually.");
+          setError(
+            "I couldn't generate recommendations right now. Please enter your trip details manually."
+          );
           // Don't advance to step 2 automatically if we want them to enter manually on step 1 or just show error
         } else {
           setRecommendations(suggestions);
           setStep(2);
         }
       } catch (err) {
-        setError("AI Service unavailable. Please proceed manually.");
+        console.error('AI recommendation error:', err);
+        setError('AI Service unavailable. Please proceed manually.');
       } finally {
         setLoadingAI(false);
       }
@@ -327,10 +368,15 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
 
   const handleCreate = async (chosen?: Recommendation) => {
     if (!user) return;
-    
+
     // Frontend validation
-    if (formData.groupSize < APP_CONFIG.MIN_GROUP_SIZE || formData.groupSize > APP_CONFIG.MAX_GROUP_SIZE) {
-      setError(`Group size must be between ${APP_CONFIG.MIN_GROUP_SIZE} and ${APP_CONFIG.MAX_GROUP_SIZE}`);
+    if (
+      formData.groupSize < APP_CONFIG.MIN_GROUP_SIZE ||
+      formData.groupSize > APP_CONFIG.MAX_GROUP_SIZE
+    ) {
+      setError(
+        `Group size must be between ${APP_CONFIG.MIN_GROUP_SIZE} and ${APP_CONFIG.MAX_GROUP_SIZE}`
+      );
       return;
     }
 
@@ -347,11 +393,11 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         paidAmount: 0,
-        totalAmountDue: 0
+        totalAmountDue: 0,
       };
 
       const docRef = await addDoc(collection(db, 'trips'), tripData);
-      
+
       // Add admin as first participant
       await setDoc(doc(db, 'trips', docRef.id, 'participants', user.uid), {
         userId: user.uid,
@@ -361,7 +407,7 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
         status: ParticipantStatus.JOINED,
         paid: false,
         amountPaid: 0,
-        joinedAt: serverTimestamp()
+        joinedAt: serverTimestamp(),
       });
 
       onClose();
@@ -371,13 +417,13 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl"
     >
-      <motion.div 
+      <motion.div
         initial={{ scale: 0.9, y: 20 }}
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.9, y: 20 }}
@@ -388,7 +434,10 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
             <div className="space-y-10">
               <div>
                 <h2 className="editorial-title text-5xl mb-4 italic">Design Your Journey</h2>
-                <p className="text-white/30 text-sm max-w-md font-light leading-relaxed">Establish the core parameters of your exploration. Our intelligence layer will assist with the logistics.</p>
+                <p className="text-white/30 text-sm max-w-md font-light leading-relaxed">
+                  Establish the core parameters of your exploration. Our intelligence layer will
+                  assist with the logistics.
+                </p>
               </div>
 
               <div className="space-y-6">
@@ -399,36 +448,40 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
                 )}
                 <div className="relative">
                   <div className="absolute -left-6 top-1/2 -translate-y-1/2 w-1 h-8 bg-brand rounded-full" />
-                  <input 
+                  <input
                     autoFocus
                     placeholder="Journey Title (e.g. Aegean Sanctuary)"
                     className="w-full bg-white/5 border border-white/10 rounded-2xl px-8 py-5 outline-none focus:border-brand focus:bg-brand/5 transition-all text-xl font-serif italic"
                     value={formData.name}
-                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   />
                 </div>
-                <input 
+                <input
                   placeholder="Target Coordinate (or anywhere exotic)"
                   className="w-full bg-white/5 border border-white/10 rounded-2xl px-8 py-5 outline-none focus:border-brand transition-all font-mono uppercase text-xs tracking-widest"
                   value={formData.destination}
-                  onChange={e => setFormData({ ...formData, destination: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, destination: e.target.value })}
                 />
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
                   <div className="space-y-4">
                     <div className="flex justify-between items-end">
                       <span className="micro-label">Budget Allocation</span>
-                      <span className="text-xl font-serif italic text-brand text-gradient tracking-tighter">${formData.budget}pp</span>
+                      <span className="text-xl font-serif italic text-brand text-gradient tracking-tighter">
+                        ${formData.budget}pp
+                      </span>
                     </div>
                     <div className="relative pt-2">
-                      <input 
-                        type="range" 
-                        min="100" 
-                        max="5000" 
+                      <input
+                        type="range"
+                        min="100"
+                        max="5000"
                         step="100"
                         className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
                         value={formData.budget}
-                        onChange={e => setFormData({ ...formData, budget: Number(e.target.value) })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, budget: Number(e.target.value) })
+                        }
                       />
                     </div>
                   </div>
@@ -436,17 +489,21 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
                   <div className="space-y-4">
                     <div className="flex justify-between items-end">
                       <span className="micro-label">Group Capacity</span>
-                      <span className="text-xl font-serif italic text-brand text-gradient tracking-tighter">{formData.groupSize} People</span>
+                      <span className="text-xl font-serif italic text-brand text-gradient tracking-tighter">
+                        {formData.groupSize} People
+                      </span>
                     </div>
                     <div className="relative pt-2">
-                      <input 
-                        type="range" 
-                        min={APP_CONFIG.MIN_GROUP_SIZE} 
-                        max={APP_CONFIG.MAX_GROUP_SIZE} 
+                      <input
+                        type="range"
+                        min={APP_CONFIG.MIN_GROUP_SIZE}
+                        max={APP_CONFIG.MAX_GROUP_SIZE}
                         step="1"
                         className="w-full h-1 bg-white/5 rounded-lg appearance-none cursor-pointer accent-brand"
                         value={formData.groupSize}
-                        onChange={e => setFormData({ ...formData, groupSize: Number(e.target.value) })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, groupSize: Number(e.target.value) })
+                        }
                       />
                     </div>
                   </div>
@@ -454,22 +511,27 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
               </div>
 
               <div className="flex justify-between items-center pt-4">
-                <button onClick={onClose} className="micro-label hover:text-white transition-colors">Abort Mission</button>
+                <button
+                  onClick={onClose}
+                  className="micro-label hover:text-white transition-colors"
+                >
+                  Abort Mission
+                </button>
                 <div className="flex gap-4">
                   {error && !loadingAI && (
-                    <button 
+                    <button
                       onClick={() => handleCreate()}
                       className="border border-white/20 text-white px-8 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-white/5 transition-all shadow-xl"
                     >
                       Skip AI & Create
                     </button>
                   )}
-                  <button 
+                  <button
                     onClick={handleNext}
                     disabled={loadingAI}
                     className="bg-brand text-white px-10 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-brand/80 transition-all disabled:opacity-50 shadow-2xl shadow-brand/20 active:scale-95"
                   >
-                    {loadingAI ? 'Calculating...' : (error ? 'Retry AI' : 'Scan For Suggestions')}
+                    {loadingAI ? 'Calculating...' : error ? 'Retry AI' : 'Scan For Suggestions'}
                   </button>
                 </div>
               </div>
@@ -478,12 +540,14 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
             <div className="space-y-8">
               <div>
                 <h2 className="font-serif text-4xl tracking-tighter mb-2 italic">AI Suggestions</h2>
-                <p className="text-white/40 text-sm font-mono uppercase tracking-[0.2em]">Based on your budget and preferences</p>
+                <p className="text-white/40 text-sm font-mono uppercase tracking-[0.2em]">
+                  Based on your budget and preferences
+                </p>
               </div>
 
               <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                 {recommendations.map((rec, i) => (
-                  <motion.div 
+                  <motion.div
                     key={i}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -492,13 +556,20 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
                     className="p-6 bg-white/5 border border-white/10 rounded-2xl cursor-pointer hover:border-brand hover:bg-brand/5 transition-all group"
                   >
                     <div className="flex justify-between items-start mb-2">
-                      <h4 className="text-xl font-medium tracking-tight group-hover:text-brand transition-colors">{rec.destination}</h4>
+                      <h4 className="text-xl font-medium tracking-tight group-hover:text-brand transition-colors">
+                        {rec.destination}
+                      </h4>
                       <span className="text-brand font-mono text-sm">${rec.estimatedCost}pp</span>
                     </div>
                     <p className="text-white/50 text-sm mb-4 leading-relaxed">{rec.description}</p>
                     <div className="flex flex-wrap gap-2">
                       {rec.activities.map((a, j) => (
-                        <span key={j} className="text-[9px] uppercase tracking-wider bg-white/5 px-2 py-1 rounded text-white/30">{a}</span>
+                        <span
+                          key={j}
+                          className="text-[9px] uppercase tracking-wider bg-white/5 px-2 py-1 rounded text-white/30"
+                        >
+                          {a}
+                        </span>
                       ))}
                     </div>
                   </motion.div>
@@ -506,8 +577,13 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
               </div>
 
               <div className="flex justify-between items-center">
-                <button onClick={() => setStep(1)} className="text-white/40 hover:text-white underline text-sm transition-colors font-mono uppercase tracking-widest">Back</button>
-                <button 
+                <button
+                  onClick={() => setStep(1)}
+                  className="text-white/40 hover:text-white underline text-sm transition-colors font-mono uppercase tracking-widest"
+                >
+                  Back
+                </button>
+                <button
                   onClick={() => handleCreate()}
                   className="text-white/60 hover:text-white transition-colors text-sm font-mono uppercase tracking-widest"
                 >
@@ -522,15 +598,23 @@ function CreateTripModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function InsuranceUpsellModal({ onConfirm, onCancel, price }: { onConfirm: (withInsurance: boolean) => void, onCancel: () => void, price: number }) {
+function InsuranceUpsellModal({
+  onConfirm,
+  onCancel,
+  price,
+}: {
+  onConfirm: (withInsurance: boolean) => void;
+  onCancel: () => void;
+  price: number;
+}) {
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/80 backdrop-blur-md"
     >
-      <motion.div 
+      <motion.div
         initial={{ scale: 0.9, y: 20 }}
         animate={{ scale: 1, y: 0 }}
         className="w-full max-w-md glass-card overflow-hidden"
@@ -541,70 +625,94 @@ function InsuranceUpsellModal({ onConfirm, onCancel, price }: { onConfirm: (with
           </div>
           <h3 className="font-serif text-3xl tracking-tighter mb-4 italic">Protect Your Journey</h3>
           <p className="text-white/50 text-sm mb-4 leading-relaxed">
-            Add comprehensive trip insurance for just <span className="text-white font-mono">${price}</span>.
-            Covers cancellations, medical emergencies, and lost luggage.
+            Add comprehensive trip insurance for just{' '}
+            <span className="text-white font-mono">${price}</span>. Covers cancellations, medical
+            emergencies, and lost luggage.
           </p>
-          <a 
-            href="https://www.worldnomads.com/travel-insurance" 
-            target="_blank" 
+          <a
+            href="https://www.worldnomads.com/travel-insurance"
+            target="_blank"
             rel="noopener noreferrer"
             className="inline-block mb-8 text-[10px] text-brand hover:underline font-mono uppercase tracking-widest"
           >
             View Policy Details
           </a>
-          
+
           <div className="grid grid-cols-1 gap-3">
-            <button 
+            <button
               onClick={() => onConfirm(true)}
               className="w-full py-4 bg-brand text-white font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand/80 transition-all shadow-xl shadow-brand/20"
             >
               Add Protection (+${APP_CONFIG.INSURANCE_PRICE})
             </button>
-            <button 
+            <button
               onClick={() => onConfirm(false)}
               className="w-full py-4 bg-white/5 text-white/40 font-bold uppercase text-[10px] tracking-widest rounded-xl hover:text-white transition-all"
             >
               No thanks, I'll take the risk
             </button>
           </div>
-          <button onClick={onCancel} className="mt-6 text-[9px] uppercase tracking-widest text-white/20 hover:text-white/40 transition-colors">Go Back</button>
+          <button
+            onClick={onCancel}
+            className="mt-6 text-[9px] uppercase tracking-widest text-white/20 hover:text-white/40 transition-colors"
+          >
+            Go Back
+          </button>
         </div>
       </motion.div>
     </motion.div>
   );
 }
 
-function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
+function TripDetail({ trip, onBack }: { trip: Trip; onBack: () => void }) {
   const { user } = useAuth();
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [documents, setDocuments] = useState<TripDocument[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'chat' | 'docs'>('overview');
   const [newMessage, setNewMessage] = useState('');
   const [isInsuranceModalOpen, setIsInsuranceModalOpen] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [taskData, setTaskData] = useState({ title: '', description: '', dueDate: '' });
-  const [toast, setToast] = useState<{ message: string, type: 'info' | 'success' | 'error' } | null>(null);
+  const [docData, setDocData] = useState({ name: '', url: '', type: 'general' });
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'info' | 'success' | 'error';
+  } | null>(null);
 
   useEffect(() => {
     const pUnsubscribe = onSnapshot(collection(db, 'trips', trip.id, 'participants'), (snap) => {
-      setParticipants(snap.docs.map(d => normalizeData<Participant>({ id: d.id, ...d.data() })));
+      setParticipants(snap.docs.map((d) => normalizeData<Participant>({ id: d.id, ...d.data() })));
     });
     const mUnsubscribe = onSnapshot(
-      query(collection(db, 'trips', trip.id, 'messages'), orderBy('createdAt', 'asc')), 
+      query(collection(db, 'trips', trip.id, 'messages'), orderBy('createdAt', 'asc')),
       (snap) => {
-        setMessages(snap.docs.map(d => normalizeData<Message>({ id: d.id, ...d.data() })));
+        setMessages(snap.docs.map((d) => normalizeData<Message>({ id: d.id, ...d.data() })));
       },
       (err) => handleFirestoreError(err, OperationType.LIST, `trips/${trip.id}/messages`)
     );
     const tUnsubscribe = onSnapshot(collection(db, 'trips', trip.id, 'tasks'), (snap) => {
-      setTasks(snap.docs.map(d => normalizeData<Task>({ id: d.id, ...d.data() })).sort((a,b) => (b.createdAt as number || 0) - (a.createdAt as number || 0)));
+      setTasks(
+        snap.docs
+          .map((d) => normalizeData<Task>({ id: d.id, ...d.data() }))
+          .sort((a, b) => ((b.createdAt as number) || 0) - ((a.createdAt as number) || 0))
+      );
+    });
+    const dUnsubscribe = onSnapshot(collection(db, 'trips', trip.id, 'documents'), (snap) => {
+      setDocuments(
+        snap.docs
+          .map((d) => normalizeData<TripDocument>({ id: d.id, ...d.data() }))
+          .sort((a, b) => ((b.createdAt as number) || 0) - ((a.createdAt as number) || 0))
+      );
     });
 
     return () => {
       pUnsubscribe();
       mUnsubscribe();
       tUnsubscribe();
+      dUnsubscribe();
     };
   }, [trip.id]);
 
@@ -615,21 +723,21 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         text: newMessage,
         userId: user.uid,
         userName: user.displayName,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
       setNewMessage('');
     } catch (e) {
       console.error(e);
-      setToast({ message: "Failed to send", type: 'error' });
+      setToast({ message: 'Failed to send', type: 'error' });
     }
   };
 
   const createTask = async () => {
     if (!taskData.title.trim() || !user) return;
-    
+
     // Date validation
     if (taskData.dueDate && !isValid(new Date(taskData.dueDate))) {
-      setToast({ message: "Invalid date format", type: 'error' });
+      setToast({ message: 'Invalid date format', type: 'error' });
       return;
     }
 
@@ -638,64 +746,104 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         ...taskData,
         completed: false,
         createdBy: user.uid,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
       setIsTaskModalOpen(false);
       setTaskData({ title: '', description: '', dueDate: '' });
-      setToast({ message: "Task Created", type: 'success' });
+      setToast({ message: 'Task Created', type: 'success' });
     } catch (e) {
       console.error(e);
-      setToast({ message: "Failed to create task", type: 'error' });
+      setToast({ message: 'Failed to create task', type: 'error' });
     }
   };
 
   const toggleTask = async (task: Task) => {
     try {
       await updateDoc(doc(db, 'trips', trip.id, 'tasks', task.id), {
-        completed: !task.completed
+        completed: !task.completed,
       });
     } catch (e) {
       console.error(e);
     }
   };
 
+  const deleteTask = async (taskId: string) => {
+    try {
+      await deleteDoc(doc(db, 'trips', trip.id, 'tasks', taskId));
+      setToast({ message: 'Objective removed', type: 'info' });
+    } catch (e) {
+      console.error(e);
+      setToast({ message: 'Failed to delete task', type: 'error' });
+    }
+  };
+
+  const createDocument = async () => {
+    if (!docData.name.trim() || !docData.url.trim() || !user) return;
+    try {
+      await addDoc(collection(db, 'trips', trip.id, 'documents'), {
+        name: docData.name,
+        url: docData.url,
+        type: docData.type || 'general',
+        uploadedById: user.uid,
+        createdAt: serverTimestamp(),
+      });
+      setIsDocModalOpen(false);
+      setDocData({ name: '', url: '', type: 'general' });
+      setToast({ message: 'Document Uploaded', type: 'success' });
+    } catch (e) {
+      console.error(e);
+      setToast({ message: 'Failed to upload document', type: 'error' });
+    }
+  };
+
+  const deleteDocument = async (docId: string) => {
+    try {
+      await deleteDoc(doc(db, 'trips', trip.id, 'documents', docId));
+      setToast({ message: 'Document removed', type: 'info' });
+    } catch (e) {
+      console.error(e);
+      setToast({ message: 'Failed to delete document', type: 'error' });
+    }
+  };
+
   const joinTrip = async () => {
     if (!user) return;
     try {
-      const { runTransaction, increment, arrayUnion } = await import('firebase/firestore');
       await runTransaction(db, async (transaction) => {
         const tripRef = doc(db, 'trips', trip.id);
         const tripSnap = await transaction.get(tripRef);
-        
-        if (!tripSnap.exists()) throw new Error("Trip not found");
+
+        if (!tripSnap.exists()) throw new Error('Trip not found');
         const currentTrip = tripSnap.data() as Trip;
-        
+
         console.log(`[Transaction] Initiating join for user ${user.uid} on trip ${trip.id}`);
-        console.log(`[Transaction] Current state - Count: ${currentTrip.participantCount || 0}, Capacity: ${currentTrip.groupSize}`);
-        
+        console.log(
+          `[Transaction] Current state - Count: ${currentTrip.participantCount || 0}, Capacity: ${currentTrip.groupSize}`
+        );
+
         // Prevent duplicate joining in the same transaction
         if (currentTrip.participantIds?.includes(user.uid)) {
           console.warn(`[Transaction] User ${user.uid} already exists in participantIds`);
-          throw new Error("You are already joined to this trip.");
+          throw new Error('You are already joined to this trip.');
         }
-        
+
         // Use denormalized count for efficient scaling
         if ((currentTrip.participantCount || 0) >= currentTrip.groupSize) {
           console.error(`[Transaction] Capacity exceeded for trip ${trip.id}`);
-          throw new Error("This mission has reached maximum capacity.");
+          throw new Error('This mission has reached maximum capacity.');
         }
 
         const participantRef = doc(db, 'trips', trip.id, 'participants', user.uid);
-        
+
         // Atomically increment the count and maintain participant IDs for security rules
-        transaction.update(tripRef, { 
+        transaction.update(tripRef, {
           participantCount: increment(1),
           participantIds: arrayUnion(user.uid),
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
         });
-        
+
         console.log(`[Transaction] Successfully committed join for ${user.uid}`);
-        
+
         transaction.set(participantRef, {
           userId: user.uid,
           displayName: user.displayName || 'Traveler',
@@ -704,15 +852,15 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           status: ParticipantStatus.JOINED,
           paid: false,
           amountPaid: 0,
-          joinedAt: serverTimestamp()
+          joinedAt: serverTimestamp(),
         });
       });
-      setToast({ message: "Welcome to the crew", type: 'success' });
+      setToast({ message: 'Welcome to the crew', type: 'success' });
     } catch (e: any) {
       if (e.code === 'permission-denied') {
         handleFirestoreError(e, OperationType.WRITE, `trips/${trip.id}/participants`);
       } else {
-        setToast({ message: e.message || "Failed to join", type: 'error' });
+        setToast({ message: e.message || 'Failed to join', type: 'error' });
       }
     }
   };
@@ -722,9 +870,9 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
     try {
       await updateDoc(doc(db, 'trips', trip.id), {
         status: TripStatus.CONFIRMED,
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
       });
-      setToast({ message: "Journey Finalized", type: 'success' });
+      setToast({ message: 'Journey Finalized', type: 'success' });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `trips/${trip.id}`);
     }
@@ -733,7 +881,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
   const copyTripLink = () => {
     const link = `${window.location.origin}/join/${trip.id}`;
     navigator.clipboard.writeText(link);
-    setToast({ message: "Invite Link Copied", type: 'success' });
+    setToast({ message: 'Invite Link Copied', type: 'success' });
   };
 
   const handlePayment = async (withInsurance: boolean = false) => {
@@ -744,7 +892,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         paid: true,
         amountPaid: trip.budget + (withInsurance ? APP_CONFIG.INSURANCE_PRICE : 0),
         insuranceSelected: withInsurance,
-        status: ParticipantStatus.JOINED
+        status: ParticipantStatus.JOINED,
       });
       setIsInsuranceModalOpen(false);
     } catch (e) {
@@ -752,37 +900,43 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
     }
   };
 
-  const currentUserParticipant = participants.find(p => p.userId === user?.uid);
-
-    const inviteLink = `${window.location.origin}/join/${trip.id}`;
+  const currentUserParticipant = participants.find((p) => p.userId === user?.uid);
 
   const getInitials = (name: string) => {
     if (!name) return 'U';
-    return name.split(' ').filter(n => n.length > 0).map(n => n[0]).join('').toUpperCase();
+    return name
+      .split(' ')
+      .filter((n) => n.length > 0)
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase();
   };
 
   return (
     <div className="min-h-screen bg-[#050505] border-grid">
       <AnimatePresence>
-        {toast && <Toast message={toast.message} type={toast.type} onClear={() => setToast(null)} />}
+        {toast && (
+          <Toast message={toast.message} type={toast.type} onClear={() => setToast(null)} />
+        )}
       </AnimatePresence>
-      
+
       {/* Editorial Header */}
       <div className="relative h-[50vh] md:h-[70vh] overflow-hidden flex items-end px-6 pb-20">
         <div className="absolute inset-0 atmosphere opacity-60" />
         <div className="absolute inset-0 bg-linear-to-t from-[#050505] via-[#050505]/40 to-transparent" />
-        
+
         <div className="max-w-7xl mx-auto w-full z-10 flex flex-col md:flex-row md:items-end md:justify-between gap-12">
           <motion.div
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
           >
-            <button 
+            <button
               onClick={onBack}
               className="mb-12 flex items-center gap-3 text-white/40 hover:text-white transition-colors micro-label group"
             >
-              <Plus className="w-3 h-3 rotate-45 group-hover:text-brand transition-colors" /> Back to Explorations
+              <Plus className="w-3 h-3 rotate-45 group-hover:text-brand transition-colors" /> Back
+              to Explorations
             </button>
             <h2 className="editorial-title text-7xl md:text-[8vw] text-gradient mb-8">
               {trip.name}
@@ -805,25 +959,27 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
 
           <div className="flex gap-4">
             {!currentUserParticipant ? (
-              <button 
+              <button
                 onClick={joinTrip}
                 disabled={trip.status !== TripStatus.PLANNING}
                 className={cn(
-                  "px-12 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.4em] transition-all shadow-2xl active:scale-95 flex items-center gap-2",
-                  trip.status === TripStatus.PLANNING 
-                    ? "bg-brand text-white hover:bg-brand/80 shadow-brand/30" 
-                    : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
+                  'px-12 py-4 rounded-full font-bold uppercase text-[10px] tracking-[0.4em] transition-all shadow-2xl active:scale-95 flex items-center gap-2',
+                  trip.status === TripStatus.PLANNING
+                    ? 'bg-brand text-white hover:bg-brand/80 shadow-brand/30'
+                    : 'bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none'
                 )}
               >
                 {trip.status === TripStatus.PLANNING ? (
-                  <><Plus className="w-4 h-4" /> Join Initiative</>
+                  <>
+                    <Plus className="w-4 h-4" /> Join Initiative
+                  </>
                 ) : (
-                  "Manifest Locked"
+                  'Manifest Locked'
                 )}
               </button>
             ) : (
               <>
-                <button 
+                <button
                   onClick={copyTripLink}
                   className="h-16 w-16 rounded-full border border-white/10 flex items-center justify-center hover:bg-white/5 hover:border-white/20 transition-all group"
                   title="Copy Invite Link"
@@ -831,7 +987,7 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                   <Share2 className="w-6 h-6 text-white/40 group-hover:text-white transition-colors" />
                 </button>
                 {trip.adminId === user?.uid && trip.status === TripStatus.PLANNING && (
-                  <button 
+                  <button
                     onClick={finalizeTrip}
                     className="px-10 py-4 bg-brand text-white rounded-full font-bold uppercase text-[10px] tracking-[0.3em] hover:bg-brand/80 transition-all shadow-2xl shadow-brand/30 active:scale-95"
                   >
@@ -850,14 +1006,16 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           {[
             { id: 'overview', icon: TrendingUp, label: 'Overview' },
             { id: 'chat', icon: MessageSquare, label: 'Coordination' },
-            { id: 'docs', icon: FileText, label: 'Documents' }
-          ].map(tab => (
+            { id: 'docs', icon: FileText, label: 'Documents' },
+          ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
               className={cn(
-                "px-8 py-6 flex items-center gap-2 border-b-2 transition-all relative text-xs uppercase tracking-widest font-mono",
-                activeTab === tab.id ? "border-brand text-white" : "border-transparent text-white/30 hover:text-white/60"
+                'px-8 py-6 flex items-center gap-2 border-b-2 transition-all relative text-xs uppercase tracking-widest font-mono',
+                activeTab === tab.id
+                  ? 'border-brand text-white'
+                  : 'border-transparent text-white/30 hover:text-white/60'
               )}
             >
               <tab.icon className="w-4 h-4" />
@@ -867,10 +1025,10 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
         </div>
 
         <motion.div
-           key={activeTab}
-           initial={{ opacity: 0, y: 10 }}
-           animate={{ opacity: 1, y: 0 }}
-           className="pb-24"
+          key={activeTab}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="pb-24"
         >
           {activeTab === 'overview' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
@@ -879,10 +1037,14 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 <div className="glass-card p-10 border-grid">
                   <div className="flex justify-between items-baseline mb-10">
                     <div>
-                      <h3 className="editorial-title text-4xl italic mb-2 tracking-tighter">Mission Checklist</h3>
-                      <p className="micro-label">Status: {tasks.filter(t => t.completed).length}/{tasks.length} Resolved</p>
+                      <h3 className="editorial-title text-4xl italic mb-2 tracking-tighter">
+                        Mission Checklist
+                      </h3>
+                      <p className="micro-label">
+                        Status: {tasks.filter((t) => t.completed).length}/{tasks.length} Resolved
+                      </p>
                     </div>
-                    <button 
+                    <button
                       onClick={() => setIsTaskModalOpen(true)}
                       className="text-brand hover:text-white transition-colors micro-label font-bold flex items-center gap-2"
                     >
@@ -898,28 +1060,44 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                       </div>
                     ) : (
                       tasks.map((task, idx) => (
-                        <motion.div 
+                        <motion.div
                           key={task.id}
                           initial={{ opacity: 0, x: -10 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: idx * 0.05 }}
                           onClick={() => toggleTask(task)}
                           className={cn(
-                            "group p-6 rounded-2xl border transition-all cursor-pointer flex items-center gap-6",
-                            task.completed ? "bg-white/2 border-white/5 opacity-50" : "bg-white/5 border-white/10 hover:border-brand/40"
+                            'group p-6 rounded-2xl border transition-all cursor-pointer flex items-center gap-6',
+                            task.completed
+                              ? 'bg-white/2 border-white/5 opacity-50'
+                              : 'bg-white/5 border-white/10 hover:border-brand/40'
                           )}
                         >
-                          <div className={cn(
-                            "w-6 h-6 rounded-full border flex items-center justify-center transition-all",
-                            task.completed ? "bg-brand border-brand text-white" : "border-white/20 group-hover:border-brand"
-                          )}>
+                          <div
+                            className={cn(
+                              'w-6 h-6 rounded-full border flex items-center justify-center transition-all',
+                              task.completed
+                                ? 'bg-brand border-brand text-white'
+                                : 'border-white/20 group-hover:border-brand'
+                            )}
+                          >
                             {task.completed && <CheckCircle2 className="w-4 h-4" />}
                           </div>
                           <div className="flex-1">
-                            <h4 className={cn("text-lg font-light tracking-tight", task.completed && "line-through text-white/40")}>{task.title}</h4>
+                            <h4
+                              className={cn(
+                                'text-lg font-light tracking-tight',
+                                task.completed && 'line-through text-white/40'
+                              )}
+                            >
+                              {task.title}
+                            </h4>
                             {task.dueDate && (
                               <div className="flex items-center gap-2 mt-1 micro-label text-[8px] opacity-40">
-                                <Calendar className="w-2.5 h-2.5" /> Due: {isValid(new Date(task.dueDate)) ? format(new Date(task.dueDate), 'MMM dd') : 'Soon'}
+                                <Calendar className="w-2.5 h-2.5" /> Due:{' '}
+                                {isValid(new Date(task.dueDate))
+                                  ? format(new Date(task.dueDate), 'MMM dd')
+                                  : 'Soon'}
                               </div>
                             )}
                           </div>
@@ -927,6 +1105,18 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                             <div className="text-[10px] text-white/30 font-mono italic max-w-[200px] truncate">
                               {task.description}
                             </div>
+                          )}
+                          {(trip.adminId === user?.uid || task.createdBy === user?.uid) && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteTask(task.id);
+                              }}
+                              className="text-white/20 hover:text-red-400 p-2 transition-colors text-xs"
+                              title="Delete task"
+                            >
+                              ✕
+                            </button>
                           )}
                         </motion.div>
                       ))
@@ -937,24 +1127,36 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 {/* Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
                   <div className="glass-card p-6 border-l-4 border-l-brand">
-                    <div className="text-white/40 text-[9px] font-mono uppercase tracking-widest mb-4">Group Budget</div>
+                    <div className="text-white/40 text-[9px] font-mono uppercase tracking-widest mb-4">
+                      Group Budget
+                    </div>
                     <div className="text-3xl font-light">${trip.budget * participants.length}</div>
-                    <div className="text-[10px] text-white/20 font-mono mt-2">${trip.budget} per person</div>
+                    <div className="text-[10px] text-white/20 font-mono mt-2">
+                      ${trip.budget} per person
+                    </div>
                   </div>
                   <div className="glass-card p-6 border-l-4 border-l-blue-500">
-                    <div className="text-white/40 text-[9px] font-mono uppercase tracking-widest mb-4">Paid & Ready</div>
-                    <div className="text-3xl font-light">{participants.filter(p => p.paid).length}/{participants.length}</div>
+                    <div className="text-white/40 text-[9px] font-mono uppercase tracking-widest mb-4">
+                      Paid & Ready
+                    </div>
+                    <div className="text-3xl font-light">
+                      {participants.filter((p) => p.paid).length}/{participants.length}
+                    </div>
                     <div className="text-[10px] text-white/20 font-mono mt-2">People committed</div>
                   </div>
                   <div className="glass-card p-6 border-l-4 border-l-green-500">
-                    <div className="text-white/40 text-[9px] font-mono uppercase tracking-widest mb-4">Status</div>
-                    <div className="text-3xl font-light uppercase text-sm tracking-widest pt-2">{trip.status}</div>
+                    <div className="text-white/40 text-[9px] font-mono uppercase tracking-widest mb-4">
+                      Status
+                    </div>
+                    <div className="text-3xl font-light uppercase text-sm tracking-widest pt-2">
+                      {trip.status}
+                    </div>
                   </div>
                 </div>
 
                 {/* Insurance Upsell Banner */}
                 {!currentUserParticipant?.paid && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     className="glass-card p-8 bg-brand/10 border-brand/20 flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative"
@@ -966,18 +1168,23 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                       <div className="flex items-center gap-2 text-brand font-mono text-[10px] uppercase tracking-[0.3em] mb-4">
                         <Shield className="w-4 h-4" /> Recommended Add-on
                       </div>
-                      <h4 className="font-serif text-3xl tracking-tighter mb-2 italic">Travel with Confidence</h4>
-                      <p className="text-white/50 text-sm max-w-md mb-4">Our premium Tripgroup Insurance covers everything from 100% cancellation refunds to medical care abroad.</p>
-                      <a 
-                        href="https://www.worldnomads.com/travel-insurance" 
-                        target="_blank" 
+                      <h4 className="font-serif text-3xl tracking-tighter mb-2 italic">
+                        Travel with Confidence
+                      </h4>
+                      <p className="text-white/50 text-sm max-w-md mb-4">
+                        Our premium Tripgroup Insurance covers everything from 100% cancellation
+                        refunds to medical care abroad.
+                      </p>
+                      <a
+                        href="https://www.worldnomads.com/travel-insurance"
+                        target="_blank"
                         rel="noopener noreferrer"
                         className="inline-block text-[10px] text-brand hover:underline font-mono uppercase tracking-widest"
                       >
                         View Policy Details
                       </a>
                     </div>
-                    <button 
+                    <button
                       onClick={() => setIsInsuranceModalOpen(true)}
                       className="relative z-10 px-8 py-3 bg-brand text-white rounded-full font-bold uppercase text-[10px] tracking-widest hover:bg-brand/80 transition-all whitespace-nowrap"
                     >
@@ -986,17 +1193,23 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                   </motion.div>
                 )}
 
-
                 {/* Progress */}
                 <div className="glass-card p-8">
                   <div className="flex justify-between items-end mb-6">
                     <h4 className="font-serif text-2xl italic tracking-tight">Financial Health</h4>
-                    <span className="text-brand font-mono text-sm">{Math.round((participants.filter(p => p.paid).length / participants.length) * 100 || 0)}%</span>
+                    <span className="text-brand font-mono text-sm">
+                      {Math.round(
+                        (participants.filter((p) => p.paid).length / participants.length) * 100 || 0
+                      )}
+                      %
+                    </span>
                   </div>
                   <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden mb-8">
-                    <motion.div 
+                    <motion.div
                       initial={{ width: 0 }}
-                      animate={{ width: `${(participants.filter(p => p.paid).length / participants.length) * 100 || 5}%` }}
+                      animate={{
+                        width: `${(participants.filter((p) => p.paid).length / participants.length) * 100 || 5}%`,
+                      }}
                       className="h-full bg-brand shadow-[0_0_15px_rgba(255,99,33,0.5)]"
                     />
                   </div>
@@ -1008,14 +1221,21 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
 
                 {/* Itinerary Preview (Static in MVP) */}
                 <div>
-                  <h4 className="text-white/20 uppercase text-[10px] tracking-[0.4em] font-mono mb-8">Proposed Itinerary</h4>
+                  <h4 className="text-white/20 uppercase text-[10px] tracking-[0.4em] font-mono mb-8">
+                    Proposed Itinerary
+                  </h4>
                   <div className="space-y-4">
-                    {[1, 2, 3].map(day => (
+                    {[1, 2, 3].map((day) => (
                       <div key={day} className="flex gap-8 group">
                         <div className="text-brand font-mono text-xl pt-1">0{day}</div>
                         <div className="pb-8 border-b border-white/5 flex-1">
-                          <h5 className="text-lg font-medium mb-2 group-hover:text-brand transition-colors">Morning at the Cathedral & Markets</h5>
-                          <p className="text-white/40 text-sm leading-relaxed">Relaxed breakfast followed by a guided tour of the historical district. Meeting at 9:00 AM in the lobby.</p>
+                          <h5 className="text-lg font-medium mb-2 group-hover:text-brand transition-colors">
+                            Morning at the Cathedral & Markets
+                          </h5>
+                          <p className="text-white/40 text-sm leading-relaxed">
+                            Relaxed breakfast followed by a guided tour of the historical district.
+                            Meeting at 9:00 AM in the lobby.
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -1026,30 +1246,46 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
               <div className="space-y-12">
                 {/* Participants */}
                 <div>
-                  <h4 className="text-white/20 uppercase text-[10px] tracking-[0.4em] font-mono mb-6">Explorers</h4>
+                  <h4 className="text-white/20 uppercase text-[10px] tracking-[0.4em] font-mono mb-6">
+                    Explorers
+                  </h4>
                   <div className="space-y-4">
-                    {participants.map(p => (
-                      <div key={p.userId} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-transparent hover:border-white/10 transition-all">
+                    {participants.map((p) => (
+                      <div
+                        key={p.userId}
+                        className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-transparent hover:border-white/10 transition-all"
+                      >
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center overflow-hidden border border-white/10">
-                            {p.photoURL ? <img src={p.photoURL} alt={p.displayName} /> : <Users className="w-4 h-4 text-white/20" />}
+                            {p.photoURL ? (
+                              <img src={p.photoURL} alt={p.displayName} />
+                            ) : (
+                              <Users className="w-4 h-4 text-white/20" />
+                            )}
                           </div>
                           <div>
                             <div className="text-sm font-medium">{p.displayName}</div>
-                            <div className={cn("text-[9px] uppercase tracking-widest font-mono", p.role === 'admin' ? 'text-brand' : 'text-white/30')}>
+                            <div
+                              className={cn(
+                                'text-[9px] uppercase tracking-widest font-mono',
+                                p.role === 'admin' ? 'text-brand' : 'text-white/30'
+                              )}
+                            >
                               {p.role}
                             </div>
                           </div>
                         </div>
                         {p.paid ? (
                           <div className="flex items-center gap-2">
-                            {p.insuranceSelected && <Shield className="w-4 h-4 text-brand" title="Insured" />}
+                            {p.insuranceSelected && (
+                              <Shield className="w-4 h-4 text-brand" title="Insured" />
+                            )}
                             <CheckCircle2 className="w-5 h-5 text-green-500" />
                           </div>
                         ) : (
                           <div className="flex items-center gap-3">
                             {p.userId === user?.uid && (
-                              <button 
+                              <button
                                 onClick={() => setIsInsuranceModalOpen(true)}
                                 className="text-[9px] uppercase tracking-widest font-bold text-brand hover:underline"
                               >
@@ -1068,12 +1304,15 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 {trip.adminId === user?.uid && (
                   <div className="p-8 bg-brand/5 border border-brand/20 rounded-3xl">
                     <h5 className="font-serif text-xl italic mb-4">Trip Admin Tools</h5>
-                    <p className="text-white/50 text-xs mb-6 leading-relaxed">As the organizer, you can finalize bookings and trigger automated payment collection once the group threshold is met.</p>
-                    <button 
+                    <p className="text-white/50 text-xs mb-6 leading-relaxed">
+                      As the organizer, you can finalize bookings and trigger automated payment
+                      collection once the group threshold is met.
+                    </p>
+                    <button
                       onClick={finalizeTrip}
                       disabled={trip.status !== TripStatus.PLANNING}
                       className={cn(
-                        "w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all disabled:opacity-50",
+                        'w-full py-3 bg-white text-black font-bold uppercase text-[10px] tracking-widest rounded-xl hover:bg-brand hover:text-white transition-all disabled:opacity-50'
                       )}
                     >
                       Finalize Bookings
@@ -1086,107 +1325,212 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
 
           {activeTab === 'chat' && (
             <div className="flex flex-col h-[70vh] glass-card overflow-hidden">
-               <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar bg-white/2 border-grid">
-                 <div className="flex justify-center mb-8">
-                    <button 
-                      onClick={() => setIsTaskModalOpen(true)}
-                      className="px-6 py-2 bg-brand/10 border border-brand/20 text-brand rounded-full micro-label font-bold hover:bg-brand hover:text-white transition-all shadow-xl shadow-brand/10"
-                    >
-                      + Create Mission Objective
-                    </button>
-                 </div>
-                 {messages.length === 0 && (
-                   <div className="h-full flex flex-col items-center justify-center text-white/10 italic">
-                     <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-6 animate-float">
-                       <MessageSquare className="w-6 h-6 text-brand" />
-                     </div>
-                     <p className="micro-label">Channel secured. Waiting for data.</p>
-                   </div>
-                 )}
-                 {messages.map((m, idx) => (
-                   <motion.div 
-                    key={m.id} 
+              <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar bg-white/2 border-grid">
+                <div className="flex justify-center mb-8">
+                  <button
+                    onClick={() => setIsTaskModalOpen(true)}
+                    className="px-6 py-2 bg-brand/10 border border-brand/20 text-brand rounded-full micro-label font-bold hover:bg-brand hover:text-white transition-all shadow-xl shadow-brand/10"
+                  >
+                    + Create Mission Objective
+                  </button>
+                </div>
+                {messages.length === 0 && (
+                  <div className="h-full flex flex-col items-center justify-center text-white/10 italic">
+                    <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-6 animate-float">
+                      <MessageSquare className="w-6 h-6 text-brand" />
+                    </div>
+                    <p className="micro-label">Channel secured. Waiting for data.</p>
+                  </div>
+                )}
+                {messages.map((m, idx) => (
+                  <motion.div
+                    key={m.id}
                     initial={{ opacity: 0, x: m.userId === user?.uid ? 20 : -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: idx * 0.05 }}
-                    className={cn("flex flex-col max-w-[70%]", m.userId === user?.uid ? "ml-auto items-end" : "items-start")}
-                   >
-                     <div className="flex items-center gap-3 mb-2 px-2">
-                        {m.userId !== user?.uid && (
-                          <div className="w-6 h-6 rounded-full bg-brand/20 flex items-center justify-center text-[10px] font-bold text-brand border border-brand/20">
-                            {getInitials(m.userName || 'U')}
-                          </div>
-                        )}
-                        <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">{m.userName}</span>
-                        {m.createdAt && (
-                          <span className="text-[8px] font-mono text-white/10 uppercase">
-                            {format(m.createdAt as number || Date.now(), 'HH:mm')}
-                          </span>
-                        )}
-                     </div>
-                     <div className={cn(
-                       "px-6 py-4 rounded-3xl text-sm leading-relaxed shadow-xl",
-                       m.userId === user?.uid ? "bg-brand text-white rounded-tr-none shadow-brand/10" : "bg-white/10 text-white/80 rounded-tl-none"
-                     )}>
-                       {m.text}
-                     </div>
-                   </motion.div>
-                 ))}
-               </div>
-               <div className="p-8 border-t border-white/5 bg-white/5 flex gap-6">
-                  <input 
-                    placeholder="Establish secure connection..."
-                    className="flex-1 bg-transparent outline-none text-sm font-light tracking-wide placeholder:text-white/20"
-                    value={newMessage}
-                    onChange={e => setNewMessage(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendMessage()}
-                  />
-                  <button 
-                    onClick={sendMessage}
-                    className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center hover:bg-brand hover:text-white transition-all shadow-xl active:scale-90"
+                    className={cn(
+                      'flex flex-col max-w-[70%]',
+                      m.userId === user?.uid ? 'ml-auto items-end' : 'items-start'
+                    )}
                   >
-                    <ChevronRight className="w-5 h-5" />
-                  </button>
-               </div>
+                    <div className="flex items-center gap-3 mb-2 px-2">
+                      {m.userId !== user?.uid && (
+                        <div className="w-6 h-6 rounded-full bg-brand/20 flex items-center justify-center text-[10px] font-bold text-brand border border-brand/20">
+                          {getInitials(m.userName || 'U')}
+                        </div>
+                      )}
+                      <span className="text-[10px] font-mono text-white/30 uppercase tracking-widest">
+                        {m.userName}
+                      </span>
+                      {m.createdAt && (
+                        <span className="text-[8px] font-mono text-white/10 uppercase">
+                          {format((m.createdAt as number) || Date.now(), 'HH:mm')}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className={cn(
+                        'px-6 py-4 rounded-3xl text-sm leading-relaxed shadow-xl',
+                        m.userId === user?.uid
+                          ? 'bg-brand text-white rounded-tr-none shadow-brand/10'
+                          : 'bg-white/10 text-white/80 rounded-tl-none'
+                      )}
+                    >
+                      {m.text}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+              <div className="p-8 border-t border-white/5 bg-white/5 flex gap-6">
+                <input
+                  placeholder="Establish secure connection..."
+                  className="flex-1 bg-transparent outline-none text-sm font-light tracking-wide placeholder:text-white/20"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                />
+                <button
+                  onClick={sendMessage}
+                  className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center hover:bg-brand hover:text-white transition-all shadow-xl active:scale-90"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </div>
             </div>
           )}
 
           {activeTab === 'docs' && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              <div className="glass-card p-12 border-dashed border-white/10 flex flex-col items-center justify-center text-center group cursor-pointer hover:border-brand/40 transition-all">
+              <div
+                onClick={() => setIsDocModalOpen(true)}
+                className="glass-card p-12 border-dashed border-white/10 flex flex-col items-center justify-center text-center group cursor-pointer hover:border-brand/40 transition-all"
+              >
                 <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-6 group-hover:bg-brand/10 transition-colors">
                   <Plus className="w-6 h-6 text-white/20 group-hover:text-brand transition-colors" />
                 </div>
                 <h5 className="font-serif text-xl mb-2 italic">Upload Documents</h5>
-                <p className="text-white/30 text-xs max-w-[200px]">Add tickets, hotel vouchers, or excursion confirmations.</p>
+                <p className="text-white/30 text-xs max-w-[200px]">
+                  Add tickets, hotel vouchers, or excursion confirmations.
+                </p>
               </div>
-              
-              {/* Fake doc example */}
-              <div className="glass-card p-8 group overflow-hidden relative">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-100 transition-opacity">
-                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+
+              {documents.map((d) => (
+                <div key={d.id} className="glass-card p-8 group overflow-hidden relative">
+                  <div className="flex justify-between items-start mb-6">
+                    <FileText className="w-8 h-8 text-brand" />
+                    {(trip.adminId === user?.uid || d.uploadedById === user?.uid) && (
+                      <button
+                        onClick={() => deleteDocument(d.id)}
+                        className="text-white/20 hover:text-red-400 text-xs transition-colors p-1"
+                        title="Delete document"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  <h5 className="text-lg font-medium mb-1 truncate">{d.name}</h5>
+                  <p className="text-white/40 text-[10px] uppercase tracking-widest font-mono mb-6">
+                    {d.type || 'Document'}
+                  </p>
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full text-center py-2 bg-white/5 border border-white/10 rounded-lg text-[10px] uppercase tracking-widest hover:bg-white hover:text-black transition-all"
+                  >
+                    View Document
+                  </a>
                 </div>
-                <FileText className="w-8 h-8 text-brand mb-6" />
-                <h5 className="text-lg font-medium mb-1">Flight ET-882</h5>
-                <p className="text-white/40 text-[10px] uppercase tracking-widest font-mono mb-6">Boarding Pass PDF</p>
-                <button className="w-full py-2 bg-white/5 border border-white/10 rounded-lg text-[10px] uppercase tracking-widest hover:bg-white hover:text-black transition-all">
-                  Download
-                </button>
-              </div>
+              ))}
             </div>
           )}
         </motion.div>
       </div>
 
       <AnimatePresence>
-        {isTaskModalOpen && (
-          <motion.div 
+        {isDocModalOpen && (
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-xl bg-black/60"
           >
-            <motion.div 
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              className="glass-card w-full max-w-md p-10 shadow-2xl relative overflow-hidden bg-[#050505] border-white/10"
+            >
+              <div className="absolute inset-0 atmosphere opacity-20" />
+              <div className="relative z-10">
+                <h3 className="editorial-title text-4xl mb-6 italic">Upload Document</h3>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="micro-label">Document Name</label>
+                    <input
+                      autoFocus
+                      placeholder="e.g. Flight Boarding Pass PDF"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all text-white"
+                      value={docData.name}
+                      onChange={(e) => setDocData({ ...docData, name: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="micro-label">Document URL</label>
+                    <input
+                      placeholder="https://..."
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all text-white text-xs font-mono"
+                      value={docData.url}
+                      onChange={(e) => setDocData({ ...docData, url: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="micro-label">Category</label>
+                    <select
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all font-mono uppercase text-xs text-white"
+                      value={docData.type}
+                      onChange={(e) => setDocData({ ...docData, type: e.target.value })}
+                    >
+                      <option value="flight" className="bg-black text-white">
+                        Flight Ticket
+                      </option>
+                      <option value="hotel" className="bg-black text-white">
+                        Hotel Voucher
+                      </option>
+                      <option value="excursion" className="bg-black text-white">
+                        Excursion Pass
+                      </option>
+                      <option value="general" className="bg-black text-white">
+                        General Document
+                      </option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-between items-center pt-10">
+                  <button
+                    onClick={() => setIsDocModalOpen(false)}
+                    className="micro-label hover:text-white transition-colors"
+                  >
+                    Abort
+                  </button>
+                  <button
+                    onClick={createDocument}
+                    className="bg-brand text-white px-10 py-4 rounded-full font-bold uppercase text-[10px] tracking-widest hover:bg-brand/80 transition-all shadow-xl shadow-brand/20 active:scale-95"
+                  >
+                    Add Document
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+        {isTaskModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-xl bg-black/60"
+          >
+            <motion.div
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               className="glass-card w-full max-w-md p-10 shadow-2xl relative overflow-hidden bg-[#050505] border-white/10"
@@ -1197,36 +1541,41 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
                 <div className="space-y-6">
                   <div className="space-y-2">
                     <label className="micro-label">Title</label>
-                    <input 
+                    <input
                       autoFocus
                       placeholder="e.g. Confirm Flight Transfers"
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all text-white"
                       value={taskData.title}
-                      onChange={e => setTaskData({ ...taskData, title: e.target.value })}
+                      onChange={(e) => setTaskData({ ...taskData, title: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
                     <label className="micro-label">Details</label>
-                    <textarea 
+                    <textarea
                       placeholder="Add specific instructions..."
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all h-24 resize-none text-white"
                       value={taskData.description}
-                      onChange={e => setTaskData({ ...taskData, description: e.target.value })}
+                      onChange={(e) => setTaskData({ ...taskData, description: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
                     <label className="micro-label">Deadline</label>
-                    <input 
+                    <input
                       type="date"
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-6 py-4 outline-none focus:border-brand transition-all font-mono uppercase text-xs text-white"
                       value={taskData.dueDate}
-                      onChange={e => setTaskData({ ...taskData, dueDate: e.target.value })}
+                      onChange={(e) => setTaskData({ ...taskData, dueDate: e.target.value })}
                     />
                   </div>
                 </div>
                 <div className="flex justify-between items-center pt-10">
-                  <button onClick={() => setIsTaskModalOpen(false)} className="micro-label hover:text-white transition-colors">Abort</button>
-                  <button 
+                  <button
+                    onClick={() => setIsTaskModalOpen(false)}
+                    className="micro-label hover:text-white transition-colors"
+                  >
+                    Abort
+                  </button>
+                  <button
                     onClick={createTask}
                     className="bg-brand text-white px-10 py-4 rounded-full font-bold uppercase text-[10px] tracking-widest hover:bg-brand/80 transition-all shadow-xl shadow-brand/20 active:scale-95"
                   >
@@ -1238,10 +1587,10 @@ function TripDetail({ trip, onBack }: { trip: Trip, onBack: () => void }) {
           </motion.div>
         )}
         {isInsuranceModalOpen && (
-          <InsuranceUpsellModal 
-            price={APP_CONFIG.INSURANCE_PRICE} 
-            onConfirm={(withInsurance) => handlePayment(withInsurance)} 
-            onCancel={() => setIsInsuranceModalOpen(false)} 
+          <InsuranceUpsellModal
+            price={APP_CONFIG.INSURANCE_PRICE}
+            onConfirm={(withInsurance) => handlePayment(withInsurance)}
+            onCancel={() => setIsInsuranceModalOpen(false)}
           />
         )}
       </AnimatePresence>
