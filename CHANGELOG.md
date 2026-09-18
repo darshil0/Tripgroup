@@ -2,9 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-05-06
+
+### Upgraded & Security Hardened
+
+- **Dependency Audit**: Eliminated all 13 vulnerability advisories across transitive dependencies (`vite`, `esbuild`, `qs`, `@grpc/grpc-js`, `body-parser`, `protobufjs`, `ws`, `nanoid`, etc.).
+- **Vite & Tooling Upgrades**: Upgraded Vite, ESLint, TypeScript, and devDependencies to latest compatible stable releases.
+- **Zero Build Warnings**: Fixed Rollup static/dynamic import conflict by moving Firestore transaction helpers to top-level imports, and updated `vite.config.ts` to `import.meta.dirname`.
+
+### Added & Improved Features
+
+- **Real-Time Document Management**: Implemented real-time document upload, categorised display (flight, hotel, excursion, general), and deletion controls adhering to `firestore.rules` and `firebase-blueprint.json`.
+- **Task Deletion**: Added task deletion capabilities for task creators and trip administrators.
+- **AI Model Upgrade**: Updated Gemini integration to `gemini-2.0-flash` with fallback environment variable support.
+- **Automated Test Suite**: Added Vitest test suites covering UI utilities, Firestore data normalization, and Gemini AI service mocks.
+- **Design Specifications**: Added and validated `DESIGN.MD` (passing `npx @google/design.md lint DESIGN.MD`) and `SKILLS.MD` for AI workflow governance.
+
 ## [1.5.0] - 2026-05-06
 
 ### Added
+
 - **Zero-Trust Visibility**: Implemented server-side trip filtering using `participantIds` array to ensure users only see missions they are authorized to access.
 - **Concurrency Safety**: Hardened the `joinTrip` transaction logic with atomic check-then-act patterns to prevent duplicate memberships and overselling group capacity.
 - **Server-Side Ordering**: Migrated message history sorting to the Firestore query layer for improved performance and temporal consistency.
@@ -16,6 +33,7 @@ All notable changes to this project will be documented in this file.
 ## [1.4.0] - 2026-05-06
 
 ### Fixed & Hardened
+
 - **Security**: Migrated Gemini API key to standard Vite environment variables (`VITE_GEMINI_API_KEY`) and removed `define` config exposure.
 - **Scalability**: Implemented denormalized `participantCount` on Trip documents to optimize capacity checking and transaction performance.
 - **Data Consistency**: Standardized all database creation/updates to use Firestore's `serverTimestamp()` instead of heterogeneous client-side clocks.
@@ -28,6 +46,7 @@ All notable changes to this project will be documented in this file.
 ## [1.3.0] - 2026-05-06
 
 ### Added
+
 - **Mission Checklist**: New task management system for trip objectives with real-time sync.
 - **Capacity-Aware Joining**: Robust "Join Initiative" functionality using Firestore transactions to enforce `groupSize` limits.
 - **Admin Lock State**: Ability for trip creators to "Finalize Bookings," locking the mission state and preventing new joins.
@@ -36,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - **Environment Variable Secrets**: Migrated Firebase configuration to environment variables (`VITE_FIREBASE_*`) to prevent secret scanning issues.
 
 ### Improved
+
 - **AI Resilience**: Updated Gemini integration with stable `gemini-flash-latest` alias, 15s request timeouts, and input sanitization.
 - **Security Hardening**: Enforced strict integer bounds on `groupSize` (1-50) and immutable field protection in Firestore rules.
 - **UI Consistency**: Enhanced trip headers with capacity status and synchronized date formatting across views.
@@ -43,6 +63,7 @@ All notable changes to this project will be documented in this file.
 ## [1.2.0] - 2026-05-06
 
 ### Added
+
 - "View Policy Details" link to Insurance Upsell Modal and Banners.
 - Editorial-grade UI design system (visible grids, atmosphere backgrounds, micro-labels).
 - Toast notification system for success and error states.
@@ -50,6 +71,7 @@ All notable changes to this project will be documented in this file.
 - Lazy initialization for Gemini AI service.
 
 ### Fixed
+
 - Fixed duplicate `vite` dependency in `package.json`.
 - Fixed message synchronization logic using Firestore `serverTimestamp`.
 - Improved typesafety across the application.
@@ -59,12 +81,14 @@ All notable changes to this project will be documented in this file.
 ## [1.1.0] - 2026-05-06
 
 ### Added
+
 - **Trip Insurance Upsell**: Integrated a "Protection" flow allowing users to opt for trip insurance during the payment phase.
 - **Participant Insurance Staking**: Firestore schema updated to track insurance status per participant.
 
 ## [0.9.0] - 2026-05-06
 
 ### Added
+
 - **Gemini AI Integration**: Implemented `geminiService` to provide smart destination recommendations during trip creation.
 - **Real-time Coordination**: Added trip-specific group chat functionality.
 - **Document Management**: UI for sharing and viewing trip documents like boarding passes.
@@ -72,6 +96,7 @@ All notable changes to this project will be documented in this file.
 ## [0.8.0] - 2026-05-06
 
 ### Added
+
 - **Firebase Infrastructure**: Provisioned Firestore and Auth.
 - **Core UI**: Implemented Dashboard, Trip Discovery, and detailed Trip view with motion animations.
 - **Security Rules**: Deployed hardened Firestore rules following ABAC principles.
@@ -79,4 +104,5 @@ All notable changes to this project will be documented in this file.
 ## [0.5.0] - 2026-05-06
 
 ### Added
+
 - Initial project scaffolding with React, Vite, and Tailwind CSS.

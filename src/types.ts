@@ -2,18 +2,18 @@ export enum TripStatus {
   PLANNING = 'planning',
   CONFIRMED = 'confirmed',
   COMPLETED = 'completed',
-  CANCELLED = 'cancelled'
+  CANCELLED = 'cancelled',
 }
 
 export enum ParticipantRole {
   ADMIN = 'admin',
-  MEMBER = 'member'
+  MEMBER = 'member',
 }
 
 export enum ParticipantStatus {
   INVITED = 'invited',
   JOINED = 'joined',
-  DECLINED = 'declined'
+  DECLINED = 'declined',
 }
 
 export interface UserProfile {

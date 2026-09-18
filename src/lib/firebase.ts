@@ -9,9 +9,11 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigFile.appId,
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigFile.apiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigFile.authDomain,
-  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigFile.firestoreDatabaseId,
+  firestoreDatabaseId:
+    import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigFile.firestoreDatabaseId,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigFile.storageBucket,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigFile.messagingSenderId,
+  messagingSenderId:
+    import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigFile.messagingSenderId,
 };
 
 const app = initializeApp(firebaseConfig);
@@ -23,7 +25,7 @@ export const auth = getAuth();
  */
 export function normalizeData<T>(data: any): T {
   if (!data || typeof data !== 'object') return data;
-  
+
   if (data instanceof Timestamp) {
     return data.toMillis() as any;
   }
@@ -38,7 +40,7 @@ export function normalizeData<T>(data: any): T {
   }
 
   if (Array.isArray(data)) {
-    return data.map(item => normalizeData(item)) as any;
+    return data.map((item) => normalizeData(item)) as any;
   }
 
   const result: any = {};
@@ -54,7 +56,7 @@ async function testConnection() {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+      console.error('Please check your Firebase configuration.');
     }
   }
 }
@@ -83,10 +85,14 @@ export interface FirestoreErrorInfo {
       providerId?: string | null;
       email?: string | null;
     }[];
-  }
+  };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -95,19 +101,20 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
     },
     operationType,
-    path
-  }
-  
+    path,
+  };
+
   // Predictable error message for logging and UI consumption
   const message = `[FirestoreError] ${operationType.toUpperCase()} on ${path || 'unknown'}: ${errInfo.error}`;
   console.error(message, errInfo);
-  
+
   // Throwing a standardized error object
   const finalError = new Error(message);
   (finalError as any).details = errInfo;

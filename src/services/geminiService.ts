@@ -1,12 +1,12 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type } from '@google/genai';
 
 let aiInstance: GoogleGenAI | null = null;
 
 function getAI() {
   if (!aiInstance) {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error("VITE_GEMINI_API_KEY is not defined. AI features require this key.");
+      throw new Error('VITE_GEMINI_API_KEY is not defined. AI features require this key.');
     }
     aiInstance = new GoogleGenAI({ apiKey });
   }
@@ -24,16 +24,21 @@ export interface Recommendation {
  * Sanitizes input text to prevent prompt injection or broken JSON requests.
  */
 function sanitizeInput(text: string): string {
-  if (!text) return "";
+  if (!text) return '';
   // Remove control characters, common injection tokens, and limit length
   return text
-    .replace(/[<>{}|[\]\\^`]/g, "") // Remove common JSON/HTML control characters
-    .replace(/\b(system|user|assistant):\b/gi, "") // Prevent role-play injection
+    .replace(/[<>{}|[\]\\^`]/g, '') // Remove common JSON/HTML control characters
+    .replace(/\b(system|user|assistant):\b/gi, '') // Prevent role-play injection
     .slice(0, 300)
     .trim();
 }
 
-export async function getTripRecommendations(groupSize: number, budgetPerPerson: number, preferences: string, retries = 2): Promise<Recommendation[]> {
+export async function getTripRecommendations(
+  groupSize: number,
+  budgetPerPerson: number,
+  preferences: string,
+  retries = 2
+): Promise<Recommendation[]> {
   const cleanPreferences = sanitizeInput(preferences);
   const prompt = `Suggest 3 group holiday destinations for a group of ${groupSize} people with a budget of $${budgetPerPerson} per person. Preferences: ${cleanPreferences}. Return a JSON array of objects with destination, description, estimatedCost (per person), and activities (array of strings).`;
 
@@ -44,10 +49,10 @@ export async function getTripRecommendations(groupSize: number, budgetPerPerson:
     try {
       const ai = getAI();
       const response = await ai.models.generateContent({
-        model: "gemini-flash-latest",
+        model: 'gemini-2.0-flash',
         contents: prompt,
         config: {
-          responseMimeType: "application/json",
+          responseMimeType: 'application/json',
           responseSchema: {
             type: Type.ARRAY,
             items: {
@@ -56,15 +61,15 @@ export async function getTripRecommendations(groupSize: number, budgetPerPerson:
                 destination: { type: Type.STRING },
                 description: { type: Type.STRING },
                 estimatedCost: { type: Type.NUMBER },
-                activities: { 
+                activities: {
                   type: Type.ARRAY,
-                  items: { type: Type.STRING }
-                }
+                  items: { type: Type.STRING },
+                },
               },
-              required: ["destination", "description", "estimatedCost", "activities"]
-            }
-          }
-        }
+              required: ['destination', 'description', 'estimatedCost', 'activities'],
+            },
+          },
+        },
       });
 
       clearTimeout(timeoutId);
@@ -74,16 +79,19 @@ export async function getTripRecommendations(groupSize: number, budgetPerPerson:
     } catch (error) {
       clearTimeout(timeoutId);
       const isTimeout = error instanceof Error && error.name === 'AbortError';
-      
+
       if (attempt < retries) {
-        console.warn(`Gemini attempt ${attempt + 1} failed. Retrying...`, isTimeout ? "Timeout" : error);
+        console.warn(
+          `Gemini attempt ${attempt + 1} failed. Retrying...`,
+          isTimeout ? 'Timeout' : error
+        );
         return executeRequest(attempt + 1);
       }
 
       if (isTimeout) {
-        console.error("Gemini Request Timed Out after maximum attempts");
+        console.error('Gemini Request Timed Out after maximum attempts');
       } else {
-        console.error("Gemini AI Layer Error:", error);
+        console.error('Gemini AI Layer Error:', error);
       }
       return [];
     }

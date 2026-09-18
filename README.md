@@ -4,45 +4,74 @@ Tripgroup is a comprehensive, investor-ready group holiday booking platform desi
 
 ## 🚀 Key Features
 
-- **AI-Powered Discovery**: Leverage Gemini AI to get personalized destination recommendations based on your group's budget and preferences.
-- **Group Wallet**: Track group payments and financial health with visual progress bars.
-- **Coordination Hub**: Real-time group chat and document management (boarding passes, vouchers).
-- **Insurance Upsell**: Integrated trip protection options to ensure peace of mind.
-- **Administrative Control**: Centralized dashboard for trip admins to manage participants and bookings.
+- **AI-Powered Discovery**: Leverage Google Gemini API (`gemini-2.0-flash`) to get personalized destination recommendations based on budget and preferences.
+- **Group Wallet & Insurance**: Track group payments and financial health with progress bars and integrated trip insurance add-ons.
+- **Coordination Hub**: Real-time group chat and document management (boarding passes, vouchers, flight details).
+- **Mission Objectives**: Real-time checklist and objective tracking with deadline validation and deletion controls.
+- **Administrative Control**: Centralized dashboard for trip admins to manage participants, lock manifests, and trigger booking finalization.
 
 ## 🛠 Tech Stack
 
-- **Frontend**: React 19, Vite, Tailwind CSS, Motion (framer-motion)
+- **Frontend**: React 19, Vite 8, Tailwind CSS 4, Motion (framer-motion)
 - **Backend & Auth**: Firebase Firestore, Firebase Authentication (Google Login)
-- **AI Integration**: Google Gemini API (@google/genai)
-- **Icons**: Lucide React
-- **Date Handling**: date-fns
+- **AI Integration**: Google Gemini API (`@google/genai`)
+- **Testing & Tooling**: Vitest, React Testing Library, ESLint, Prettier, Playwright
 
 ## 📦 Getting Started
 
 ### Prerequisites
 
-You will need a Gemini API Key to enable AI recommendations.
+- Node.js 18+ and npm
+- Gemini API Key (or set `VITE_GEMINI_API_KEY`)
 
 ### Environment Variables
 
 Create a `.env` file (based on `.env.example`):
 
 ```env
-GEMINI_API_KEY="your_gemini_api_key"
+VITE_GEMINI_API_KEY="your_gemini_api_key"
 
-# Optional: Firebase config to avoid hardcoding in source control
+# Optional Firebase config overrides (falls back to firebase-applet-config.json)
 VITE_FIREBASE_API_KEY="your_firebase_api_key"
 VITE_FIREBASE_PROJECT_ID="your_project_id"
-# ... see .env.example for more
+VITE_FIREBASE_AUTH_DOMAIN="your_auth_domain"
+VITE_FIREBASE_FIRESTORE_DATABASE_ID="your_database_id"
 ```
 
-## 🔒 Security Note
+### Developer Commands
 
-To avoid secret scanning warnings in GitHub:
-1. Copy the values from `firebase-applet-config.json` to your environment variables.
-2. Ensure `.env` is in your `.gitignore` (it is by default in this project).
-3. If you want to strictly prevent scanning of the config file, you can move its contents to environment variables and use placeholders in the file.
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Run static type checking and ESLint
+npm run lint
+
+# Format codebase with Prettier
+npm run format
+
+# Run unit and integration tests with Vitest
+npm run test
+
+# Build for production
+npm run build
+```
+
+## 📐 Design & AI Specifications
+
+- **`DESIGN.MD`**: Contains machine-readable design tokens, palette definitions, and component guidelines. Validated via `npx @google/design.md lint DESIGN.MD`.
+- **`SKILLS.MD`**: Outlines AI workflow specifications, model details, and zero-trust security patterns.
+
+## 🔒 Security Model
+
+Tripgroup enforces zero-trust trip visibility:
+
+1. Trip visibility is scoped strictly to participants listed in `participantIds`.
+2. Concurrency-safe Firestore transactions prevent overbooking group capacity.
+3. Strict input sanitization prevents prompt injection on Gemini requests.
 
 ## 📜 License
 

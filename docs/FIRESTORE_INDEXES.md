@@ -4,23 +4,24 @@ The following composite indexes are required for optimal performance of the Trip
 
 ## Trips Collection
 
-| Collection Group | Properties to Index | Query Scope |
-| :--- | :--- | :--- |
-| `trips` | `status` (Ascending), `createdAt` (Descending) | Collection |
-| `trips` | `adminId` (Ascending), `createdAt` (Descending) | Collection |
-| `trips` | `participantIds` (Array Containing), `createdAt` (Descending) | Collection |
+| Collection Group | Properties to Index                                           | Query Scope |
+| :--------------- | :------------------------------------------------------------ | :---------- |
+| `trips`          | `status` (Ascending), `createdAt` (Descending)                | Collection  |
+| `trips`          | `adminId` (Ascending), `createdAt` (Descending)               | Collection  |
+| `trips`          | `participantIds` (Array Containing), `createdAt` (Descending) | Collection  |
 
 ## Participant Tracking
 
-| Collection Group | Properties to Index | Query Scope |
-| :--- | :--- | :--- |
-| `participants` | `role` (Ascending), `joinedAt` (Descending) | Collection Group |
+| Collection Group | Properties to Index                         | Query Scope      |
+| :--------------- | :------------------------------------------ | :--------------- |
+| `participants`   | `role` (Ascending), `joinedAt` (Descending) | Collection Group |
 
 ## Message History
 
-| Collection Group | Properties to Index | Query Scope |
-| :--- | :--- | :--- |
-| `messages` | `tripId` (Ascending), `createdAt` (Ascending) | Collection |
+| Collection Group | Properties to Index                           | Query Scope |
+| :--------------- | :-------------------------------------------- | :---------- |
+| `messages`       | `tripId` (Ascending), `createdAt` (Ascending) | Collection  |
 
 ---
+
 **Note:** If you encounter a "Missing Index" error in the browser console, Firestore provides a direct link to create the required index with a single click.
